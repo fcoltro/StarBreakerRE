@@ -15,7 +15,7 @@ server, export pipeline). Blender-addon-specific guidance lives in
 - `crates/starbreaker-ui/` — SWF atom extractor and BuildingBlocks canvas
   composer for ship screens (its own `AGENTS.md` and `docs/`).
 - `crates/starbreaker-p4k/`, `-chunks/`, `-cryxml/`, `-datacore/`,
-  `-dds/`, `-wem/`, `-wwise/`, `-chf/`, `-dna/`, `-gfx/`, `-common/` —
+  `-dds/`, `-wem/`, `-wwise/`, `-chf/`, `-dna/`, `-gfx/`, `-swf/`, `-common/` —
   format decoders.
 - `cli/` — package name is `starbreaker` (binary `starbreaker`), NOT
   `starbreaker-cli`.

@@ -53,6 +53,7 @@ thiserror = "2"
 tokio = "1"
 zerocopy = { version = "0.8", features = ["derive"] }
 structured-zstd = "0.2"
+swf = "0.3"
 
 # Workspace crates
 starbreaker-3d = { path = "crates/starbreaker-3d" }
@@ -66,6 +67,7 @@ starbreaker-dds = { path = "crates/starbreaker-dds" }
 starbreaker-dna = { path = "crates/starbreaker-dna" }
 starbreaker-gfx = { path = "crates/starbreaker-gfx" }
 starbreaker-p4k = { path = "crates/starbreaker-p4k" }
+starbreaker-swf = { path = "crates/starbreaker-swf" }
 starbreaker-ui = { path = "crates/starbreaker-ui" }
 starbreaker-wem = { path = "crates/starbreaker-wem" }
 starbreaker-wwise = { path = "crates/starbreaker-wwise" }
