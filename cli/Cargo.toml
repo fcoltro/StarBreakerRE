@@ -20,6 +20,8 @@ starbreaker-blend = { workspace = true }
 starbreaker-cryxml = { workspace = true }
 starbreaker-dds = { workspace = true }
 starbreaker-gfx = { workspace = true }
+starbreaker-swf = { workspace = true }
+swf = { workspace = true }
 
 clap = { workspace = true }
 thiserror = { workspace = true }
