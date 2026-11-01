@@ -6,11 +6,11 @@
 //! - Write individual `.blend` files to `Data/Objects/...` paths
 //! - Return decomposed export with .blend mesh files instead of GLB
 //!
-//! Phase 2 (scene.blend linking) — infrastructure complete
-//! Phase 3 (lights and empties) — extraction and creation
-//! Phase 4 (decal vertex groups) — material identification
-//! Phase 5D (decal material assignment) — vertex group material assignment
-#![allow(dead_code)]
+//! Phase 2: scene.blend linking (collections, linked mesh instances, rig)
+//! Phase 3A: light extraction from interiors (`extract_lights_from_interiors`)
+//! Phase 4A/4B: decal/POM material identification and the
+//! `starbreaker_decal_offset` vertex group
+
 
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -38,9 +38,9 @@ use starbreaker_blend::{
     SDNA_IDX_COLLECTION_OBJECT, SDNA_IDX_DNA1, SDNA_IDX_FILE_GLOBAL, SDNA_IDX_LAYER_COLLECTION,
     SDNA_IDX_IDPROPERTY, SDNA_IDX_MATERIAL, SDNA_IDX_MESH, SDNA_IDX_OBJECT, SDNA_IDX_SCENE, SDNA_IDX_TOOL_SETTINGS,
     SDNA_IDX_VIEW_LAYER, SDNA_IDX_LIBRARY, SDNA_IDX_ID,
-    build_lamp, build_lamp_with_node_tree_and_properties, build_lamp_object,
+    build_lamp_with_node_tree_and_properties,
     build_lamp_object_with_properties_and_visibility, build_empty_object, build_empty_object_with_properties,
-    build_library_block, build_id_stub, LAMP_SIZE, OBJECT_SIZE,
+    build_library_block, build_id_stub, OBJECT_SIZE,
     SDNA_IDX_LAMP,
     set_object_modifiers_listbase, SDNA_IDX_DISPLACE_MODIFIER,
     ints2_data, triangle_edge_topology, write_f32, write_i16, write_identity_matrix4x4, write_ptr,
@@ -172,15 +172,6 @@ fn package_root_properties(entity_name: &str) -> Vec<(String, IdPropValue)> {
         ("starbreaker_package_name".to_string(), IdPropValue::String(entity_name.to_string())),
         ("starbreaker_entity_name".to_string(), IdPropValue::String(entity_name.to_string())),
         ("starbreaker_palette_id".to_string(), IdPropValue::String(String::new())),
-    ]
-}
-
-fn entity_wrapper_properties(entity_name: &str) -> Vec<(String, IdPropValue)> {
-    vec![
-        ("starbreaker_scene_path".to_string(), IdPropValue::String(package_scene_path(entity_name))),
-        ("starbreaker_export_root".to_string(), IdPropValue::String(String::new())),
-        ("starbreaker_package_name".to_string(), IdPropValue::String(entity_name.to_string())),
-        ("starbreaker_entity_name".to_string(), IdPropValue::String(entity_name.to_string())),
     ]
 }
 
@@ -911,12 +902,8 @@ pub fn write_decomposed_export_blend(
     let children_for_scene = input.children.iter().map(|c| c.entity_name.clone()).collect::<Vec<_>>();
     let mut scene_mesh_instances = Vec::new();
     
-    // Phase 3: Extract lights and empties BEFORE calling write_decomposed_export
+    // Phase 3: Extract lights BEFORE calling write_decomposed_export
     let extracted_lights = extract_lights_from_interiors(&input.interiors)
-        .unwrap_or_default();
-    
-    let _extracted_empties = input.root_nmc.as_ref()
-        .and_then(|nmc| extract_empties_from_nmc(&nmc.nodes).ok())
         .unwrap_or_default();
     log::info!("[timing][blend] extract_lights_empties: {:.2}s", phase_start.elapsed().as_secs_f32());
     phase_start = Instant::now();
@@ -2126,46 +2113,6 @@ fn strip_lod_suffix(name: &str) -> String {
     }
 }
 
-fn linked_scene_object_names(
-    mesh_name: &str,
-    mesh: &Mesh,
-    nmc: Option<&NodeMeshCombo>,
-) -> Vec<String> {
-    let Some(nmc) = nmc.filter(|nmc| !nmc.nodes.is_empty()) else {
-        return vec![mesh_name.to_string()];
-    };
-
-    let export_names = nmc_export_object_names(mesh_name, nmc);
-    let mut names = Vec::new();
-    let mut seen = HashSet::new();
-    let mut node_submeshes: Vec<Vec<usize>> = vec![Vec::new(); nmc.nodes.len()];
-    for (submesh_index, submesh) in mesh.submeshes.iter().enumerate() {
-        let node_index = submesh.node_parent_index as usize;
-        if node_index < node_submeshes.len() {
-            node_submeshes[node_index].push(submesh_index);
-        }
-    }
-    for (node_index, submesh_indices) in node_submeshes.iter().enumerate() {
-        if submesh_indices.is_empty() {
-            continue;
-        }
-        let (node_mesh, _) = subset_mesh_for_submeshes(mesh, submesh_indices, None);
-        if node_mesh.indices.is_empty() {
-            continue;
-        }
-        let name = export_names[node_index].clone();
-        if seen.insert(name.clone()) {
-            names.push(name);
-        }
-    }
-
-    if names.is_empty() {
-        vec![mesh_name.to_string()]
-    } else {
-        names
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct LinkedMeshRef {
     object_name: String,
@@ -2408,14 +2355,6 @@ fn blend_link_data_from_bytes(blend_bytes: &[u8]) -> (Vec<LinkedMeshRef>, Vec<Li
     (linked_mesh_refs, source_nodes)
 }
 
-fn mesh_object_refs_from_blend_bytes(blend_bytes: &[u8]) -> Vec<LinkedMeshRef> {
-    blend_link_data_from_bytes(blend_bytes).0
-}
-
-fn source_empty_nodes_from_blend_bytes(blend_bytes: &[u8]) -> Vec<LinkedSourceNode> {
-    blend_link_data_from_bytes(blend_bytes).1
-}
-
 fn reusable_native_blend_asset(
     job: &BlendAssetJob,
     existing_asset_loader: Option<&(dyn Fn(&str) -> Option<Vec<u8>> + Sync)>,
@@ -2649,12 +2588,8 @@ fn interior_placement_object_name(
     strip_lod_suffix(default_name)
 }
 
-fn scene_axis_convert_vec3(value: [f32; 3]) -> [f32; 3] {
-    [value[0], -value[2], value[1]]
-}
-
 fn convert_mesh_geometry_to_scene_axes(mesh: &mut Mesh) {
-    // (x, y, z) -> (x, -z, y), as scene_axis_convert_vec3; Mesh::transform
+    // (x, y, z) -> (x, -z, y); Mesh::transform
     // moves every spatial stream (incl. morph deltas).
     let axes = glam::Mat3::from_cols(glam::Vec3::X, glam::Vec3::Z, -glam::Vec3::Y);
     mesh.transform(glam::Affine3A::from_mat3(axes));
@@ -3469,6 +3404,7 @@ const BLENDER_BAKED_ROOT_SCALE: [f32; 3] = [1.0, 1.0, 1.0];
 /// # Returns
 ///
 /// Raw uncompressed .blend bytes ready for file write or further compression
+#[cfg(test)]
 pub fn create_scene_blend(
     entity_name: &str,
     children_count: usize,
@@ -3516,6 +3452,7 @@ pub fn create_scene_blend(
     create_scene_blend_with_instances(entity_name, &mesh_instances, lights)
 }
 
+#[cfg(test)]
 pub fn create_scene_blend_with_instances(
     entity_name: &str,
     mesh_instances_input: &[LinkedMeshInstance],
@@ -3524,6 +3461,7 @@ pub fn create_scene_blend_with_instances(
     create_scene_blend_package_with_instances(entity_name, entity_name, mesh_instances_input, lights, &HashMap::new())
 }
 
+#[cfg(test)]
 fn create_scene_blend_package_with_instances(
     package_name: &str,
     root_entity_name: &str,
@@ -4600,10 +4538,9 @@ pub struct ExtractedLight {
     pub spot_size: f32,
     /// Spot cone feather width 0..1 (0 for POINT)
     pub spot_blend: f32,
-    /// Intensity in candelas (for reference)
-    pub intensity_candela: f32,
     /// Color temperature in Kelvin
     pub temperature_k: f32,
+    #[cfg_attr(not(test), allow(dead_code, reason = "not yet consumed by the lamp writer, which always uses RGB; asserted by tests"))]
     /// When true, render blackbody color at temperature_k; ignore RGB
     pub use_temperature: bool,
     /// Optional projector gobo texture path (for SPOTs)
@@ -4692,15 +4629,6 @@ fn gobo_image_blend_filepath(package_name: &str, gobo_path: &str) -> String {
     }
 }
 
-fn mat4_from_sc_columns(matrix: [[f32; 4]; 4]) -> glam::Mat4 {
-    glam::Mat4::from_cols_array(&[
-        matrix[0][0], matrix[0][1], matrix[0][2], matrix[0][3],
-        matrix[1][0], matrix[1][1], matrix[1][2], matrix[1][3],
-        matrix[2][0], matrix[2][1], matrix[2][2], matrix[2][3],
-        matrix[3][0], matrix[3][1], matrix[3][2], matrix[3][3],
-    ])
-}
-
 fn mat4_from_sc_rows(matrix: [[f32; 4]; 4]) -> glam::Mat4 {
     glam::Mat4::from_cols_array(&[
         matrix[0][0], matrix[0][1], matrix[0][2], matrix[0][3],
@@ -4708,29 +4636,6 @@ fn mat4_from_sc_rows(matrix: [[f32; 4]; 4]) -> glam::Mat4 {
         matrix[2][0], matrix[2][1], matrix[2][2], matrix[2][3],
         matrix[3][0], matrix[3][1], matrix[3][2], matrix[3][3],
     ])
-}
-
-fn transform_light_position_sc(container_transform: [[f32; 4]; 4], position: [f64; 3]) -> [f64; 3] {
-    let transformed = mat4_from_sc_columns(container_transform)
-        .transform_point3(glam::Vec3::new(position[0] as f32, position[1] as f32, position[2] as f32));
-    [transformed.x as f64, transformed.y as f64, transformed.z as f64]
-}
-
-fn transform_light_rotation_sc(container_transform: [[f32; 4]; 4], rotation: [f64; 4]) -> [f64; 4] {
-    let (_, container_rotation, _) = mat4_from_sc_columns(container_transform).to_scale_rotation_translation();
-    let local_rotation = glam::Quat::from_xyzw(
-        rotation[1] as f32,
-        rotation[2] as f32,
-        rotation[3] as f32,
-        rotation[0] as f32,
-    );
-    let transformed = (container_rotation * local_rotation).normalize();
-    [
-        transformed.w as f64,
-        transformed.x as f64,
-        transformed.y as f64,
-        transformed.z as f64,
-    ]
 }
 
 /// Convert CryEngine quaternion to Blender coordinates.
@@ -4883,7 +4788,6 @@ pub fn extract_lights_from_interiors(
                 radius_source: light_info.radius,
                 spot_size,
                 spot_blend,
-                intensity_candela: light_info.intensity_candela_proxy,
                 temperature_k,
                 use_temperature,
                 gobo_path: light_info.projector_texture.clone(),
@@ -4900,809 +4804,8 @@ pub fn extract_lights_from_interiors(
 #[cfg(test)]
 mod tests;
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 3B: Extract Empties from NMC (Node Mesh Combo)
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Extracted empty object ready for Blender scene construction.
-#[derive(Debug, Clone)]
-pub struct ExtractedEmpty {
-    /// NMC node name
-    pub name: String,
-    /// Index in NMC node array (for parent references)
-    pub nmc_index: usize,
-    /// Parent node index in NMC array (None for root)
-    pub parent_nmc_index: Option<usize>,
-    /// Position in Blender coordinates
-    pub position_blend: [f32; 3],
-    /// Rotation as quaternion in Blender coordinates [w, x, y, z]
-    pub rotation_blend: [f32; 4],
-    /// Scale per axis
-    pub scale: [f32; 3],
-    /// Geometry type from NMC (0=GEOM, 3=HELP2, etc.)
-    pub geometry_type: u16,
-    /// Whether this is a helper/non-mesh node
-    pub is_helper: bool,
-}
-
-/// Extract 4x4 matrix from NMC 3x4 row-major format
-/// Returns [position, rotation_quat, scale]
-fn extract_matrix_components(
-    matrix_3x4: &[[f32; 4]; 3]
-) -> ([f32; 3], [f32; 4], [f32; 3]) {
-    // Position is the 4th column
-    let position = [matrix_3x4[0][3], matrix_3x4[1][3], matrix_3x4[2][3]];
-    
-    // Extract rotation from 3x3 upper-left
-    // Convert 3x3 rotation matrix to quaternion
-    let rot_matrix = [
-        [matrix_3x4[0][0], matrix_3x4[0][1], matrix_3x4[0][2]],
-        [matrix_3x4[1][0], matrix_3x4[1][1], matrix_3x4[1][2]],
-        [matrix_3x4[2][0], matrix_3x4[2][1], matrix_3x4[2][2]],
-    ];
-    
-    let quaternion = matrix_to_quaternion(&rot_matrix);
-    
-    // Scale is typically [1, 1, 1], but might be stored separately
-    let scale = [1.0, 1.0, 1.0];
-    
-    (position, quaternion, scale)
-}
-
-/// Convert 3x3 rotation matrix to quaternion.
-/// Matrix is in row-major order.
-fn matrix_to_quaternion(m: &[[f32; 3]; 3]) -> [f32; 4] {
-    let trace = m[0][0] + m[1][1] + m[2][2];
-    
-    if trace > 0.0 {
-        let s = 0.5 / (trace + 1.0).sqrt();
-        [
-            0.25 / s,
-            (m[2][1] - m[1][2]) * s,
-            (m[0][2] - m[2][0]) * s,
-            (m[1][0] - m[0][1]) * s,
-        ]
-    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
-        let s = 2.0 * (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt();
-        [
-            (m[2][1] - m[1][2]) / s,
-            0.25 * s,
-            (m[0][1] + m[1][0]) / s,
-            (m[0][2] + m[2][0]) / s,
-        ]
-    } else if m[1][1] > m[2][2] {
-        let s = 2.0 * (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt();
-        [
-            (m[0][2] - m[2][0]) / s,
-            (m[0][1] + m[1][0]) / s,
-            0.25 * s,
-            (m[1][2] + m[2][1]) / s,
-        ]
-    } else {
-        let s = 2.0 * (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt();
-        [
-            (m[1][0] - m[0][1]) / s,
-            (m[0][2] + m[2][0]) / s,
-            (m[1][2] + m[2][1]) / s,
-            0.25 * s,
-        ]
-    }
-}
-
-/// Convert 3x4 CryEngine matrix to Blender coordinates
-fn convert_matrix_sc_to_blender(matrix_sc: &[[f32; 4]; 3]) -> ([[f32; 4]; 3], [f32; 4]) {
-    // Extract position and rotation
-    let (pos_sc, rot_quat_sc, _scale) = extract_matrix_components(matrix_sc);
-    
-    // Convert position
-    let pos_blend = convert_position_sc_to_blender([pos_sc[0] as f64, pos_sc[1] as f64, pos_sc[2] as f64]);
-    
-    // Convert quaternion
-    let rot_quat_blend = convert_quaternion_sc_to_blender([
-        rot_quat_sc[0] as f64,
-        rot_quat_sc[1] as f64,
-        rot_quat_sc[2] as f64,
-        rot_quat_sc[3] as f64,
-    ], false);  // Empties don't need basis correction
-    
-    // Reconstruct matrix in Blender coordinates (simplified)
-    let mut matrix_blend = [[0.0f32; 4]; 3];
-    matrix_blend[0][3] = pos_blend[0];
-    matrix_blend[1][3] = pos_blend[1];
-    matrix_blend[2][3] = pos_blend[2];
-    
-    (matrix_blend, rot_quat_blend)
-}
-
-/// Extract empties (non-mesh nodes) from NMC node hierarchy.
-///
-/// Empties are created from NMC nodes that should not be rendered as meshes:
-/// - Helper nodes (geometry_type > 0)
-/// - Nodes with special properties (e.g., "class" = "AnimatedJoint")
-/// - Group nodes for organizing the hierarchy
-pub fn extract_empties_from_nmc(
-    nmc_nodes: &[crate::nmc::NmcNode],
-) -> Result<Vec<ExtractedEmpty>, Error> {
-    let mut empties = Vec::new();
-    
-    for (idx, node) in nmc_nodes.iter().enumerate() {
-        // Determine if this node should be an empty
-        // Empties are non-mesh nodes (geometry_type != 0) or special node types
-        let is_helper = node.geometry_type != 0 || 
-                        node.properties.get("class").map(|v| v != "Mesh").unwrap_or(false);
-        
-        if !is_helper && idx > 0 {
-            // Skip mesh geometry nodes (geometry_type == 0 and no special properties)
-            continue;
-        }
-        
-        // Extract position from WorldToBone matrix
-        let pos_sc = [
-            node.world_to_bone[0][3] as f64,
-            node.world_to_bone[1][3] as f64,
-            node.world_to_bone[2][3] as f64,
-        ];
-        let position_blend = convert_position_sc_to_blender(pos_sc);
-        
-        // Extract rotation from matrix
-        let rot_matrix = [
-            [node.world_to_bone[0][0], node.world_to_bone[0][1], node.world_to_bone[0][2]],
-            [node.world_to_bone[1][0], node.world_to_bone[1][1], node.world_to_bone[1][2]],
-            [node.world_to_bone[2][0], node.world_to_bone[2][1], node.world_to_bone[2][2]],
-        ];
-        let rot_quat_sc = matrix_to_quaternion(&rot_matrix);
-        let rotation_blend = convert_quaternion_sc_to_blender([
-            rot_quat_sc[0] as f64,
-            rot_quat_sc[1] as f64,
-            rot_quat_sc[2] as f64,
-            rot_quat_sc[3] as f64,
-        ], false);  // Empties don't need basis correction
-        
-        empties.push(ExtractedEmpty {
-            name: node.name.clone(),
-            nmc_index: idx,
-            parent_nmc_index: node.parent_index.map(|p| p as usize),
-            position_blend,
-            rotation_blend,
-            scale: node.scale,
-            geometry_type: node.geometry_type,
-            is_helper,
-        });
-    }
-    
-    Ok(empties)
-}
-
-#[cfg(test)]
-mod tests_3b;
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 3C: Create Light Objects in scene.blend
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Blender lamp and object pair ready to write to .blend file
-#[derive(Debug, Clone)]
-pub struct LampBlockPair {
-    /// Lamp datablock bytes (from build_lamp)
-    pub lamp_bytes: Vec<u8>,
-    /// Pointer for lamp in file allocation
-    pub lamp_ptr: u64,
-    /// Object datablock bytes (from build_lamp_object)
-    pub object_bytes: Vec<u8>,
-    /// Pointer for object in file allocation
-    pub object_ptr: u64,
-    /// Collection name for organizing lights (e.g., "Projector", "Ambient")
-    pub collection_name: String,
-}
-
-/// Build Blender lamp datablock and object wrapper from extracted light.
-///
-/// Creates both the Lamp datablock (light properties) and Object wrapper
-/// (placement, hierarchy). Assigns pointers for file writing.
-pub fn build_lamp_blocks(
-    light: &ExtractedLight,
-    lamp_ptr: u64,
-    object_ptr: u64,
-    parent_collection_ptr: u64,
-) -> Result<LampBlockPair, Error> {
-    // Build the lamp datablock
-    let lamp_bytes = build_lamp(
-        &light.name,
-        light.lamp_type,
-        light.color,
-        light.energy_watts,
-        light.radius,
-        light.cutoff_distance,
-        light.spot_size,
-        light.spot_blend,
-        light.temperature_k,
-        light.use_temperature,
-    );
-    
-    // Build the object wrapper
-    let object_bytes = build_lamp_object(
-        &light.name,
-        lamp_ptr,
-        light.position_blend,
-        light.rotation_blend,
-        [1.0, 1.0, 1.0], // Standard scale
-        parent_collection_ptr,
-    );
-    
-    // Determine collection name by light type
-    let collection_name = match light.lamp_type {
-        0 => {
-            // POINT type - distinguish between Ambient, Omni, SoftOmni
-            if light.intensity_candela < 10.0 {
-                "Ambient".to_string()
-            } else if light.intensity_candela < 100.0 {
-                "Omni".to_string()
-            } else {
-                "SoftOmni".to_string()
-            }
-        },
-        1 => "Sun".to_string(),
-        2 => "Projector".to_string(),
-        4 => "Area".to_string(),
-        _ => "Other".to_string(),
-    };
-    
-    Ok(LampBlockPair {
-        lamp_bytes,
-        lamp_ptr,
-        object_bytes,
-        object_ptr,
-        collection_name,
-    })
-}
-
-/// Validate lamp block sizes (for safety)
-pub fn validate_lamp_block_sizes() -> Result<(), String> {
-    // Ensure block sizes match expected values
-    if LAMP_SIZE != 568 {
-        return Err(format!("Expected LAMP_SIZE=568, got {}", LAMP_SIZE));
-    }
-    if OBJECT_SIZE != 1288 {
-        return Err(format!("Expected OBJECT_SIZE=1288, got {}", OBJECT_SIZE));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests_3c;
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 3D: Create Empty Objects
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Blender empty object ready to write to .blend file
-#[derive(Debug, Clone)]
-pub struct EmptyBlockPair {
-    /// Object datablock bytes (from build_empty_object)
-    pub object_bytes: Vec<u8>,
-    /// Pointer for object in file allocation
-    pub object_ptr: u64,
-    /// Collection name for organizing empties (e.g., "Helpers", "Controls")
-    pub collection_name: String,
-}
-
-/// Build Blender empty object from extracted empty.
-///
-/// Creates an empty object placeholder for non-mesh nodes in the hierarchy.
-/// Empty objects serve as group containers, animation controls, or structural nodes.
-pub fn build_empty_blocks(
-    empty: &ExtractedEmpty,
-    object_ptr: u64,
-    parent_collection_ptr: u64,
-) -> Result<EmptyBlockPair, String> {
-    // Build the empty object
-    let object_bytes = build_empty_object(
-        &empty.name,
-        empty.position_blend,
-        empty.rotation_blend,
-        empty.scale,
-        parent_collection_ptr,
-    );
-    
-    // Determine collection name by helper type
-    let collection_name = if empty.is_helper {
-        match empty.geometry_type {
-            3 => "Controls".to_string(),  // HELP2 = control points
-            _ => "Helpers".to_string(),    // Other helper types
-        }
-    } else {
-        "Armature".to_string()  // Non-helper nodes go to Armature
-    };
-    
-    Ok(EmptyBlockPair {
-        object_bytes,
-        object_ptr,
-        collection_name,
-    })
-}
-
-/// Validate empty object block can be created
-pub fn validate_empty_object_creation() -> Result<(), String> {
-    // Verify OBJECT_SIZE is correct
-    if OBJECT_SIZE != 1288 {
-        return Err(format!("Expected OBJECT_SIZE=1288, got {}", OBJECT_SIZE));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests_3d;
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 3E: Organize Lights into Collections
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Collection hierarchy for organizing lights
-#[derive(Debug, Clone)]
-pub struct LightCollectionTree {
-    /// Root lights collection
-    pub root_ptr: u64,
-    /// Sub-collections by type: "Ambient", "Omni", "SoftOmni", "Projector", "Sun"
-    pub type_collections: std::collections::HashMap<String, u64>,
-}
-
-/// Organize extracted lights by type into collection hierarchy.
-///
-/// Creates a structure like:
-/// - Lights (root)
-///   - Ambient (collection)
-///   - Omni (collection)
-///   - SoftOmni (collection)
-///   - Projector (collection)
-///   - Sun (collection)
-///
-/// Returns mapping of light type → collection pointer for placement
-pub fn organize_lights_into_collections(
-    lights: &[ExtractedLight],
-) -> Result<LightCollectionTree, String> {
-    use std::collections::HashMap;
-    
-    // Collect unique light types
-    let mut light_types = HashMap::new();
-    for light in lights {
-        let light_type = match light.lamp_type {
-            0 => {
-                // POINT - distinguish by intensity
-                if light.intensity_candela < 10.0 {
-                    "Ambient"
-                } else if light.intensity_candela < 100.0 {
-                    "Omni"
-                } else {
-                    "SoftOmni"
-                }
-            },
-            1 => "Sun",
-            2 => "Projector",
-            4 => "Area",
-            _ => "Other",
-        };
-        light_types.entry(light_type.to_string()).or_insert_with(|| 0);
-    }
-    
-    // Build collection map with placeholder pointers
-    let mut type_collections = HashMap::new();
-    let mut next_ptr = 0x2000u64;
-    for light_type in light_types.keys() {
-        type_collections.insert(light_type.clone(), next_ptr);
-        next_ptr += 0x200;  // Space for each collection
-    }
-    
-    Ok(LightCollectionTree {
-        root_ptr: 0x1000,  // Root collection pointer
-        type_collections,
-    })
-}
-
-/// Categorize lights by type for collection organization
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum LightCategory {
-    Ambient,
-    Omni,
-    SoftOmni,
-    Projector,
-    Sun,
-    Area,
-    Other,
-}
-
-impl LightCategory {
-    /// Determine category from lamp type and intensity
-    pub fn from_light(lamp_type: i16, intensity_candela: f32) -> Self {
-        match lamp_type {
-            0 => {  // POINT
-                if intensity_candela < 10.0 {
-                    LightCategory::Ambient
-                } else if intensity_candela < 100.0 {
-                    LightCategory::Omni
-                } else {
-                    LightCategory::SoftOmni
-                }
-            },
-            1 => LightCategory::Sun,
-            2 => LightCategory::Projector,
-            4 => LightCategory::Area,
-            _ => LightCategory::Other,
-        }
-    }
-    
-    /// Get collection name
-    pub fn collection_name(&self) -> &'static str {
-        match self {
-            LightCategory::Ambient => "Ambient",
-            LightCategory::Omni => "Omni",
-            LightCategory::SoftOmni => "SoftOmni",
-            LightCategory::Projector => "Projector",
-            LightCategory::Sun => "Sun",
-            LightCategory::Area => "Area",
-            LightCategory::Other => "Other",
-        }
-    }
-}
-
-/// Validate light collection organization
-pub fn validate_light_collection_hierarchy(
-    tree: &LightCollectionTree,
-) -> Result<(), String> {
-    // Root must have valid pointer
-    if tree.root_ptr == 0 {
-        return Err("Root collection pointer cannot be 0".to_string());
-    }
-    
-    // All type collections must be unique and valid
-    let mut seen_ptrs = std::collections::HashSet::new();
-    for (type_name, ptr) in &tree.type_collections {
-        if *ptr == 0 {
-            return Err(format!("Collection '{}' has invalid pointer 0", type_name));
-        }
-        if !seen_ptrs.insert(*ptr) {
-            return Err(format!("Duplicate pointer for collection '{}'", type_name));
-        }
-        if *ptr == tree.root_ptr {
-            return Err(format!("Collection '{}' pointer conflicts with root", type_name));
-        }
-    }
-    
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests_3e;
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 5B: Organize Lights into Collections
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Organized light with collection metadata
-#[derive(Debug, Clone)]
-pub struct BlenderLight {
-    /// Extracted light with all transform and property data
-    pub light: ExtractedLight,
-    /// Collection name for organizing this light ("Ambient", "Omni", "SoftOmni", "Projector", "Sun", "Area")
-    pub collection_name: String,
-}
-
-/// Organize lights from DecomposedInput into a collection hierarchy.
-///
-/// Extracts lights from the interior data and organizes them by type:
-/// - Ambient lights (point < 10 candela)
-/// - Omni lights (point 10-100 candela)
-/// - SoftOmni lights (point > 100 candela)
-/// - Projector lights (spot)
-/// - Sun lights (directional)
-/// - Area lights
-///
-/// Returns organized lights ready for Blender scene construction.
-///
-/// # Arguments
-/// * `input` - DecomposedInput containing interior light definitions
-///
-/// # Returns
-/// * `Result<Vec<BlenderLight>, Error>` - Organized lights by collection type
-pub fn organize_lights_collection(
-    input: &DecomposedInput,
-) -> Result<Vec<BlenderLight>, Error> {
-    // Extract lights from interiors using Phase 3 extraction
-    let extracted_lights = extract_lights_from_interiors(&input.interiors)
-        .map_err(|e| Error::Other(e.to_string()))?;
-    
-    // Organize lights by category
-    let mut organized_lights = Vec::new();
-    
-    for light in extracted_lights {
-        // Determine collection name based on light type and intensity
-        let collection_name = match light.lamp_type {
-            0 => {
-                // POINT type - distinguish between Ambient, Omni, SoftOmni
-                if light.intensity_candela < 10.0 {
-                    "Ambient"
-                } else if light.intensity_candela < 100.0 {
-                    "Omni"
-                } else {
-                    "SoftOmni"
-                }
-            },
-            1 => "Sun",
-            2 => "Projector",
-            4 => "Area",
-            _ => "Other",
-        }.to_string();
-        
-        organized_lights.push(BlenderLight {
-            light,
-            collection_name,
-        });
-    }
-    
-    Ok(organized_lights)
-}
-
-/// Validate light collection organization
-pub fn validate_lights_collection_organization(
-    lights: &[BlenderLight],
-) -> Result<(), String> {
-    // Verify no lights are orphaned
-    for light in lights {
-        if light.collection_name.is_empty() {
-            return Err(format!(
-                "Light '{}' has empty collection name",
-                light.light.name
-            ));
-        }
-    }
-    
-    // Verify collection names are valid
-    let valid_collections = vec![
-        "Ambient", "Omni", "SoftOmni", "Projector", "Sun", "Area", "Other"
-    ];
-    
-    for light in lights {
-        if !valid_collections.contains(&light.collection_name.as_str()) {
-            return Err(format!(
-                "Light '{}' has invalid collection name '{}'",
-                light.light.name, light.collection_name
-            ));
-        }
-    }
-    
-    // Verify intensity thresholds are honored
-    for light in lights {
-        if light.light.lamp_type == 0 {
-            // POINT lights should be categorized by intensity
-            match light.collection_name.as_str() {
-                "Ambient" => {
-                    if light.light.intensity_candela >= 10.0 {
-                        return Err(format!(
-                            "Light '{}' marked Ambient but has intensity {} (should be < 10)",
-                            light.light.name, light.light.intensity_candela
-                        ));
-                    }
-                },
-                "Omni" => {
-                    if light.light.intensity_candela < 10.0 || light.light.intensity_candela >= 100.0 {
-                        return Err(format!(
-                            "Light '{}' marked Omni but has intensity {} (should be 10-100)",
-                            light.light.name, light.light.intensity_candela
-                        ));
-                    }
-                },
-                "SoftOmni" => {
-                    if light.light.intensity_candela < 100.0 {
-                        return Err(format!(
-                            "Light '{}' marked SoftOmni but has intensity {} (should be >= 100)",
-                            light.light.name, light.light.intensity_candela
-                        ));
-                    }
-                },
-                _ => {}
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 5B: Organize Lights into Collections (to be implemented)
-// ════════════════════════════════════════════════════════════════════════════════
-
-// Test helpers and tests for Phase 5B will be added by Phase 5B agent
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 5C: Organize Empty Objects into Collections (to be implemented)
-// ════════════════════════════════════════════════════════════════════════════════
-
-// Test helpers and tests for Phase 5C will be added by Phase 5C agent
-
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 5C: Organize Empty Objects into Collections
-// ════════════════════════════════════════════════════════════════════════════════
-
-
-/// Organized empty objects with collection metadata
-#[derive(Debug, Clone)]
-pub struct OrganizedEmpty {
-    /// Extracted empty with all transform data
-    pub empty: ExtractedEmpty,
-    /// Collection name for organizing this empty ("Helpers", "Controls", "Armature")
-    pub collection_name: String,
-}
-
-/// Collection hierarchy for organizing empties
-#[derive(Debug, Clone)]
-pub struct EmptyCollectionTree {
-    /// Root empties collection
-    pub root_ptr: u64,
-    /// Sub-collections by type: "Helpers", "Controls", "Armature"
-    pub type_collections: std::collections::HashMap<String, u64>,
-    /// Organized empties grouped by collection
-    pub empties_by_collection: std::collections::HashMap<String, Vec<OrganizedEmpty>>,
-}
-
-/// Categorize empties by type for collection organization
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EmptyCategory {
-    /// Helper nodes (geometry_type > 0, non-mesh)
-    Helpers,
-    /// Control point nodes (geometry_type == 3)
-    Controls,
-    /// Armature/skeleton nodes (geometry_type == 0, mesh nodes in hierarchy)
-    Armature,
-}
-
-impl EmptyCategory {
-    /// Determine category from empty properties
-    pub fn from_empty(is_helper: bool, geometry_type: u16) -> Self {
-        if is_helper {
-            if geometry_type == 3 {
-                EmptyCategory::Controls
-            } else {
-                EmptyCategory::Helpers
-            }
-        } else {
-            EmptyCategory::Armature
-        }
-    }
-    
-    /// Get collection name for this category
-    pub fn collection_name(&self) -> &str {
-        match self {
-            EmptyCategory::Helpers => "Helpers",
-            EmptyCategory::Controls => "Controls",
-            EmptyCategory::Armature => "Armature",
-        }
-    }
-}
-
-/// Organize extracted empties by type into collection hierarchy.
-///
-/// Creates a structure like:
-/// - Empties (root)
-///   - Helpers (collection)
-///   - Controls (collection)
-///   - Armature (collection)
-///
-/// Preserves parent-child relationships within hierarchy.
-/// All coordinate transforms have already been applied (Phase 3).
-///
-/// Returns mapping of empty type → collection pointer for placement
-pub fn organize_empties_into_collections(
-    empties: &[ExtractedEmpty],
-) -> Result<EmptyCollectionTree, String> {
-    use std::collections::HashMap;
-    
-    if empties.is_empty() {
-        return Ok(EmptyCollectionTree {
-            root_ptr: 0x1000,
-            type_collections: HashMap::new(),
-            empties_by_collection: HashMap::new(),
-        });
-    }
-    
-    // Collect unique empty types and organize empties by category
-    let mut type_collections = HashMap::new();
-    let mut empties_by_collection: HashMap<String, Vec<OrganizedEmpty>> = HashMap::new();
-    
-    for empty in empties {
-        let category = EmptyCategory::from_empty(empty.is_helper, empty.geometry_type);
-        let collection_name = category.collection_name().to_string();
-        
-        // Create collection if not exists
-        if !type_collections.contains_key(&collection_name) {
-            let next_ptr = 0x2000u64 + (type_collections.len() as u64) * 0x200;
-            type_collections.insert(collection_name.clone(), next_ptr);
-        }
-        
-        // Add empty to collection
-        empties_by_collection
-            .entry(collection_name)
-            .or_insert_with(Vec::new)
-            .push(OrganizedEmpty {
-                empty: empty.clone(),
-                collection_name: category.collection_name().to_string(),
-            });
-    }
-    
-    Ok(EmptyCollectionTree {
-        root_ptr: 0x1000,  // Root collection pointer
-        type_collections,
-        empties_by_collection,
-    })
-}
-
-/// Validate empty object collection hierarchy
-pub fn validate_empty_collection_hierarchy(tree: &EmptyCollectionTree) -> Result<(), String> {
-    // Check for duplicate pointers
-    let mut seen_ptrs = std::collections::HashSet::new();
-    for (type_name, ptr) in &tree.type_collections {
-        if seen_ptrs.contains(ptr) {
-            return Err(format!(
-                "Duplicate collection pointer 0x{:x} for type '{}'",
-                ptr, type_name
-            ));
-        }
-        seen_ptrs.insert(*ptr);
-        if *ptr == tree.root_ptr {
-            return Err(format!("Collection '{}' pointer conflicts with root", type_name));
-        }
-    }
-    
-    // Validate organization
-    for (coll_name, empties) in &tree.empties_by_collection {
-        if !tree.type_collections.contains_key(coll_name) {
-            return Err(format!("Collection '{}' organized but no corresponding type collection", coll_name));
-        }
-        
-        if empties.is_empty() {
-            return Err(format!("Collection '{}' has no empties", coll_name));
-        }
-        
-        // Verify all empties in collection match category
-        for empty_entry in empties {
-            if empty_entry.collection_name != *coll_name {
-                return Err(format!(
-                    "Empty '{}' collection_name mismatch: expected '{}', got '{}'",
-                    empty_entry.empty.name, coll_name, empty_entry.collection_name
-                ));
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Verify parent-child relationships in empty hierarchy are preserved
-pub fn verify_empty_hierarchy_preservation(
-    empties: &[ExtractedEmpty],
-) -> Result<(), String> {
-    // Build index map
-    let mut index_map = std::collections::HashMap::new();
-    for (idx, empty) in empties.iter().enumerate() {
-        index_map.insert(empty.nmc_index, idx);
-    }
-    
-    // Check all parent references are valid
-    for empty in empties {
-        if let Some(parent_idx) = empty.parent_nmc_index {
-            if !index_map.contains_key(&parent_idx) {
-                return Err(format!(
-                    "Empty '{}' has invalid parent index {}",
-                    empty.name, parent_idx
-                ));
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests_5c;
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Phase 4A: Identify Decal/POM Materials
@@ -5713,8 +4816,10 @@ mod tests_5c;
 pub struct DecalMaterial {
     /// Material name from mesh submesh
     pub material_name: String,
+    #[cfg_attr(not(test), allow(dead_code, reason = "classification result asserted by tests only"))]
     /// Whether this is a decal material
     pub is_decal: bool,
+    #[cfg_attr(not(test), allow(dead_code, reason = "classification result asserted by tests only"))]
     /// Whether this is a POM (parallax occlusion mapping) material
     pub is_pom: bool,
     /// Material index in the mesh
@@ -5728,8 +4833,6 @@ pub struct MeshWithDecals {
     pub mesh_path: String,
     /// Materials in this mesh that are decals
     pub decal_materials: Vec<DecalMaterial>,
-    /// Indices of faces using decal materials
-    pub decal_face_indices: Vec<usize>,
 }
 
 type DecalMaterialSource = (String, String, String, Vec<String>);
@@ -5829,37 +4932,11 @@ pub fn identify_meshes_with_decals(
             result.push(MeshWithDecals {
                 mesh_path: mesh_path.clone(),
                 decal_materials,
-                decal_face_indices: Vec::new(),  // Will be populated by 4B
             });
         }
     }
     
     Ok(result)
-}
-
-/// Validate decal material identification
-pub fn validate_decal_material_identification(
-    meshes: &[MeshWithDecals],
-) -> Result<(), String> {
-    for mesh in meshes {
-        if mesh.decal_materials.is_empty() {
-            return Err(format!(
-                "Mesh '{}' has no decal materials (shouldn't be in list)",
-                mesh.mesh_path
-            ));
-        }
-        
-        for material in &mesh.decal_materials {
-            if !material.is_decal && !material.is_pom {
-                return Err(format!(
-                    "Material '{}' in mesh '{}' marked as decal but has no decal properties",
-                    material.material_name, mesh.mesh_path
-                ));
-            }
-        }
-    }
-    
-    Ok(())
 }
 
 #[cfg(test)]
@@ -5881,8 +4958,10 @@ pub struct VertexGroup {
 /// Mesh with vertex groups ready to write
 #[derive(Debug, Clone)]
 pub struct MeshWithVertexGroups {
+    #[cfg_attr(not(test), allow(dead_code, reason = "asserted by tests only"))]
     /// Mesh name
     pub mesh_name: String,
+    #[cfg_attr(not(test), allow(dead_code, reason = "asserted by tests only"))]
     /// Total vertex count in mesh
     pub total_vertices: usize,
     /// Vertex groups to add to mesh
@@ -5964,379 +5043,8 @@ pub fn collect_decal_vertices(
     })
 }
 
-/// Validate vertex group integrity
-pub fn validate_vertex_groups(
-    vgroups: &[VertexGroup],
-    total_vertices: usize,
-) -> Result<(), String> {
-    for vgroup in vgroups {
-        if vgroup.name.is_empty() {
-            return Err("Vertex group has empty name".to_string());
-        }
-        
-        for &vertex_idx in &vgroup.vertex_indices {
-            if vertex_idx >= total_vertices {
-                return Err(format!(
-                    "Vertex index {} exceeds vertex count {}",
-                    vertex_idx, total_vertices
-                ));
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Phase 5D: Assign decal materials to vertex groups
-///
-/// For each mesh with decal vertices, this function validates and assigns
-/// decal materials with proper blend modes and culling flags to the vertex groups.
-///
-/// # Arguments
-///
-/// * `input` - DecomposedInput containing mesh and material data
-///
-/// # Returns
-///
-/// Result with error messages for any validation issues
-pub fn assign_decal_materials_to_vertex_groups(input: &DecomposedInput) -> Result<(), Error> {
-    // Collect all mesh materials for decal identification
-    let mut mesh_materials = Vec::new();
-    
-    // Add root mesh materials
-    if let Some(ref mtl) = input.root_materials {
-        let material_list: Vec<DecalMaterialSource> = mtl
-            .materials
-            .iter()
-            .map(|sub| {
-                (
-                    sub.name.clone(),
-                    sub.shader.clone(),
-                    sub.string_gen_mask.clone(),
-                    sub.public_params.iter().map(|param| param.name.clone()).collect(),
-                )
-            })
-            .collect();
-        mesh_materials.push(("__root__".to_string(), material_list));
-    }
-    
-    // Add child mesh materials
-    for child in &input.children {
-        if let Some(ref mtl) = child.materials {
-            let material_list: Vec<DecalMaterialSource> = mtl
-                .materials
-                .iter()
-                .map(|sub| {
-                    (
-                        sub.name.clone(),
-                        sub.shader.clone(),
-                        sub.string_gen_mask.clone(),
-                        sub.public_params.iter().map(|param| param.name.clone()).collect(),
-                    )
-                })
-                .collect();
-            mesh_materials.push((child.entity_name.clone(), material_list));
-        }
-    }
-    
-    // Identify meshes with decals
-    let meshes_with_decals = match identify_meshes_with_decals(&mesh_materials) {
-        Ok(meshes) => meshes,
-        Err(_e) => {
-            // Log the error but return Ok - this is not a fatal error
-            return Ok(());
-        }
-    };
-    
-    // Validate each mesh with decals
-    for mesh_with_decals in meshes_with_decals {
-        // Check that we have decal materials
-        if mesh_with_decals.decal_materials.is_empty() {
-            continue;
-        }
-        
-        // Find the corresponding mesh in input
-        let mesh = if mesh_with_decals.mesh_path == "__root__" {
-            Some(&input.root_mesh)
-        } else {
-            input.children.iter()
-                .find(|c| c.entity_name == mesh_with_decals.mesh_path)
-                .map(|c| &c.mesh)
-        };
-        
-        if let Some(mesh) = mesh {
-            // Validate vertex count
-            if mesh.positions.is_empty() {
-                continue;
-            }
-            
-            // For each decal material, validate its properties
-            for decal_material in &mesh_with_decals.decal_materials {
-                // Find the material in the mesh's material file
-                let material_found = if mesh_with_decals.mesh_path == "__root__" {
-                    input.root_materials.as_ref()
-                } else {
-                    input.children.iter()
-                        .find(|c| c.entity_name == mesh_with_decals.mesh_path)
-                        .and_then(|c| c.materials.as_ref())
-                }.map(|mtl| {
-                    mtl.materials.iter()
-                        .any(|sub| sub.name == decal_material.material_name)
-                }).unwrap_or(false);
-                
-                if !material_found {
-                    // Log warning but continue - material may be created dynamically
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests_4b;
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Phase 4C: Validate in Blender
-// ════════════════════════════════════════════════════════════════════════════════
-
-/// Validation result for a Blender export
-#[derive(Debug, Clone)]
-pub struct BlendValidationResult {
-    /// Total lights found
-    pub light_count: usize,
-    /// Lights by type
-    pub lights_by_type: std::collections::HashMap<String, usize>,
-    /// Total empties found
-    pub empty_count: usize,
-    /// Total collections
-    pub collection_count: usize,
-    /// Meshes with decal vertex groups
-    pub meshes_with_decals: usize,
-    /// Validation errors
-    pub errors: Vec<String>,
-    /// Validation warnings
-    pub warnings: Vec<String>,
-    /// Overall validation passed
-    pub is_valid: bool,
-}
-
-/// Validate light export results
-///
-/// Checks that lights have been properly extracted and converted.
-/// Expected: ~62 lights in Aurora Mk2
-///  - Ambient: ~10
-///  - Omni: ~5
-///  - SoftOmni: ~2
-///  - Projector: ~45
-pub fn validate_lights_extraction(
-    lights: &[ExtractedLight],
-) -> Result<BlendValidationResult, String> {
-    let mut result = BlendValidationResult {
-        light_count: lights.len(),
-        lights_by_type: std::collections::HashMap::new(),
-        empty_count: 0,
-        collection_count: 0,
-        meshes_with_decals: 0,
-        errors: Vec::new(),
-        warnings: Vec::new(),
-        is_valid: true,
-    };
-    
-    // Categorize lights
-    for light in lights {
-        let category = match light.lamp_type {
-            0 => {
-                if light.intensity_candela < 10.0 {
-                    "Ambient"
-                } else if light.intensity_candela < 100.0 {
-                    "Omni"
-                } else {
-                    "SoftOmni"
-                }
-            },
-            1 => "Sun",
-            2 => "Projector",
-            4 => "Area",
-            _ => "Other",
-        };
-        
-        *result.lights_by_type.entry(category.to_string()).or_insert(0) += 1;
-    }
-    
-    // Validate results
-    if lights.is_empty() {
-        result.errors.push("No lights extracted".to_string());
-        result.is_valid = false;
-    }
-    
-    // Check for expected Aurora Mk2 light counts (approximate)
-    if lights.len() < 50 {
-        result.warnings.push(format!(
-            "Light count {} is lower than expected ~62 for Aurora Mk2",
-            lights.len()
-        ));
-    }
-    
-    // Validate light properties
-    for light in lights {
-        if light.position_blend[0].is_nan() || light.position_blend[1].is_nan() || light.position_blend[2].is_nan() {
-            result.errors.push(format!("Light '{}' has NaN position", light.name));
-            result.is_valid = false;
-        }
-        
-        if light.rotation_blend[0].is_nan() {
-            result.errors.push(format!("Light '{}' has NaN rotation", light.name));
-            result.is_valid = false;
-        }
-        
-        if light.energy_watts <= 0.0 {
-            result.warnings.push(format!(
-                "Light '{}' has non-positive energy: {}",
-                light.name, light.energy_watts
-            ));
-        }
-    }
-    
-    Ok(result)
-}
-
-/// Validate empties extraction
-pub fn validate_empties_extraction(
-    empties: &[ExtractedEmpty],
-) -> Result<BlendValidationResult, String> {
-    let mut result = BlendValidationResult {
-        light_count: 0,
-        lights_by_type: std::collections::HashMap::new(),
-        empty_count: empties.len(),
-        collection_count: 0,
-        meshes_with_decals: 0,
-        errors: Vec::new(),
-        warnings: Vec::new(),
-        is_valid: true,
-    };
-    
-    if empties.is_empty() {
-        result.warnings.push("No empties extracted".to_string());
-    }
-    
-    // Validate empty properties
-    for empty in empties {
-        if empty.position_blend[0].is_nan() || empty.position_blend[1].is_nan() || empty.position_blend[2].is_nan() {
-            result.errors.push(format!("Empty '{}' has NaN position", empty.name));
-            result.is_valid = false;
-        }
-        
-        if empty.rotation_blend[0].is_nan() {
-            result.errors.push(format!("Empty '{}' has NaN rotation", empty.name));
-            result.is_valid = false;
-        }
-    }
-    
-    Ok(result)
-}
-
-/// Validate decal mesh identification
-pub fn validate_decals_extraction(
-    meshes: &[MeshWithDecals],
-) -> Result<BlendValidationResult, String> {
-    let mut result = BlendValidationResult {
-        light_count: 0,
-        lights_by_type: std::collections::HashMap::new(),
-        empty_count: 0,
-        collection_count: 0,
-        meshes_with_decals: meshes.len(),
-        errors: Vec::new(),
-        warnings: Vec::new(),
-        is_valid: true,
-    };
-    
-    // Validate decal materials
-    for mesh in meshes {
-        if mesh.decal_materials.is_empty() {
-            result.errors.push(format!(
-                "Mesh '{}' marked as having decals but has none",
-                mesh.mesh_path
-            ));
-            result.is_valid = false;
-        }
-        
-        for material in &mesh.decal_materials {
-            if !material.is_decal && !material.is_pom {
-                result.errors.push(format!(
-                    "Material '{}' in mesh '{}' has no decal/POM properties",
-                    material.material_name, mesh.mesh_path
-                ));
-                result.is_valid = false;
-            }
-        }
-    }
-    
-    Ok(result)
-}
-
-/// Comprehensive validation of entire Phase 3-4 pipeline
-pub fn validate_complete_phase_3_4_export(
-    lights: &[ExtractedLight],
-    empties: &[ExtractedEmpty],
-    decals: &[MeshWithDecals],
-) -> BlendValidationResult {
-    let mut result = BlendValidationResult {
-        light_count: lights.len(),
-        lights_by_type: std::collections::HashMap::new(),
-        empty_count: empties.len(),
-        collection_count: 5,  // Ambient, Omni, SoftOmni, Projector, Sun (typical)
-        meshes_with_decals: decals.len(),
-        errors: Vec::new(),
-        warnings: Vec::new(),
-        is_valid: true,
-    };
-    
-    // Categorize lights
-    for light in lights {
-        let category = match light.lamp_type {
-            0 => {
-                if light.intensity_candela < 10.0 {
-                    "Ambient"
-                } else if light.intensity_candela < 100.0 {
-                    "Omni"
-                } else {
-                    "SoftOmni"
-                }
-            },
-            1 => "Sun",
-            2 => "Projector",
-            4 => "Area",
-            _ => "Other",
-        };
-        
-        *result.lights_by_type.entry(category.to_string()).or_insert(0) += 1;
-    }
-    
-    // Basic validation checks
-    if lights.is_empty() && empties.is_empty() && decals.is_empty() {
-        result.errors.push("No lights, empties, or decals extracted".to_string());
-        result.is_valid = false;
-    }
-    
-    if lights.is_empty() {
-        result.warnings.push("No lights extracted".to_string());
-    }
-    
-    if empties.is_empty() {
-        result.warnings.push("No empties extracted".to_string());
-    }
-    
-    if decals.is_empty() {
-        result.warnings.push("No decal materials identified".to_string());
-    }
-    
-    result
-}
-
-#[cfg(test)]
-mod tests_5d;
 
 #[cfg(test)]
 mod tests_4c;

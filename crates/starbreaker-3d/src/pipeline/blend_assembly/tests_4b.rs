@@ -149,7 +149,6 @@ fn test_collect_decal_vertices_single_face() {
                 material_index: 0,
             },
         ],
-        decal_face_indices: vec![0],
     };
     
     let corner_verts = vec![0, 1, 2, 3, 4, 5];  // Two triangles
@@ -181,7 +180,6 @@ fn test_collect_decal_vertices_multiple_faces() {
                 material_index: 2,
             },
         ],
-        decal_face_indices: vec![],
     };
     
     let corner_verts = vec![
@@ -202,7 +200,6 @@ fn test_collect_decal_vertices_empty_faces() {
     let mesh_with_decals = MeshWithDecals {
         mesh_path: "Mesh_003".to_string(),
         decal_materials: vec![],
-        decal_face_indices: vec![],
     };
     
     let corner_verts = vec![0, 1, 2, 3, 4, 5];
@@ -248,7 +245,6 @@ fn test_decal_face_indices_use_source_material_id() {
             is_pom: false,
             material_index: 2,
         }],
-        decal_face_indices: Vec::new(),
     };
 
     let faces = decal_face_indices_for_mesh(&mesh, &mesh_with_decals);
@@ -291,7 +287,6 @@ fn test_decal_face_indices_fall_back_to_submesh_material_name() {
             is_pom: true,
             material_index: 24,
         }],
-        decal_face_indices: Vec::new(),
     };
 
     let faces = decal_face_indices_for_mesh(&mesh, &mesh_with_decals);
@@ -346,7 +341,6 @@ fn test_decal_face_indices_prefers_material_name_over_mismatched_source_material
             is_pom: true,
             material_index: 2,
         }],
-        decal_face_indices: Vec::new(),
     };
 
     let faces = decal_face_indices_for_mesh(&mesh, &mesh_with_decals);
@@ -364,7 +358,6 @@ fn test_decal_vertex_group_is_valid_for_all_decal_meshes() {
             is_pom: false,
             material_index: 0,
         }],
-        decal_face_indices: Vec::new(),
     };
 
     let result = collect_decal_vertices(&mesh_with_decals, &[], &[], 3).unwrap();
@@ -372,40 +365,4 @@ fn test_decal_vertex_group_is_valid_for_all_decal_meshes() {
     assert_eq!(result.vertex_groups.len(), 1);
     assert_eq!(result.vertex_groups[0].name, "starbreaker_decal_offset");
     assert!(result.vertex_groups[0].vertex_indices.is_empty());
-}
-
-#[test]
-fn test_validate_vertex_groups_valid() {
-    let vgroups = vec![
-        VertexGroup {
-            name: "starbreaker_decal_offset".to_string(),
-            vertex_indices: vec![0, 1, 2, 3],
-        },
-    ];
-    
-    assert!(validate_vertex_groups(&vgroups, 10).is_ok());
-}
-
-#[test]
-fn test_validate_vertex_groups_empty_name() {
-    let vgroups = vec![
-        VertexGroup {
-            name: "".to_string(),
-            vertex_indices: vec![0, 1],
-        },
-    ];
-    
-    assert!(validate_vertex_groups(&vgroups, 10).is_err());
-}
-
-#[test]
-fn test_validate_vertex_groups_out_of_bounds() {
-    let vgroups = vec![
-        VertexGroup {
-            name: "Group".to_string(),
-            vertex_indices: vec![0, 1, 15],  // 15 is out of bounds
-        },
-    ];
-    
-    assert!(validate_vertex_groups(&vgroups, 10).is_err());
 }

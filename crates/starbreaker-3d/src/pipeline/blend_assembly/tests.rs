@@ -22,24 +22,6 @@ fn test_convert_position_negative() {
 }
 
 #[test]
-fn test_light_position_includes_container_transform() {
-    let container_transform = crate::socpak::build_container_transform([10.0, 20.0, 30.0], [0.0, 0.0, 0.0]);
-    let transformed = transform_light_position_sc(container_transform, [1.0, 2.0, 3.0]);
-    assert_eq!(transformed, [11.0, 22.0, 33.0]);
-    assert_eq!(convert_position_sc_to_blender(transformed), [11.0, -33.0, 22.0]);
-}
-
-#[test]
-fn test_light_rotation_includes_container_transform() {
-    let container_transform = crate::socpak::build_container_transform([0.0, 0.0, 0.0], [0.0, 0.0, 90.0]);
-    let transformed = transform_light_rotation_sc(container_transform, [1.0, 0.0, 0.0, 0.0]);
-    assert!((transformed[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.0001);
-    assert!(transformed[1].abs() < 0.0001);
-    assert!(transformed[2].abs() < 0.0001);
-    assert!((transformed[3] - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.0001);
-}
-
-#[test]
 fn test_convert_quaternion_sc_to_blender() {
     // Addon-compatible light conversion applies scene-axis conversion plus
     // the glTF light basis correction for all light kinds.

@@ -1,8 +1,6 @@
 //! Phase 5A tests for native scene blend assembly and linked asset handling.
 
 use super::*;
-use crate::decomposed::DecomposedInput;
-use crate::pipeline::LoadedInteriors;
 use crate::types::{Mesh, SubMesh};
 
 #[derive(Debug)]
@@ -102,7 +100,6 @@ fn test_light(name: &str) -> ExtractedLight {
         radius_source: 10.0,
         spot_size: 0.0,
         spot_blend: 0.0,
-        intensity_candela: 5.0,
         temperature_k: 3000.0,
         use_temperature: false,
         gobo_path: None,
@@ -958,93 +955,6 @@ fn collapsed_wrapper_node_preserves_non_identity_root_transform() {
     assert!(
         (quat[3].abs() - 1.0).abs() < 1e-5,
         "expected 180-degree root rotation around Z (|z| ~= 1), got {quat:?}"
-    );
-}
-
-#[test]
-fn linked_scene_object_names_use_geometry_nodes_for_nmc_assets() {
-    let mesh = Mesh {
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        indices: vec![0, 1, 2],
-        uvs: None,
-        secondary_uvs: None,
-        normals: None,
-        tangents: None,
-        colors: None,
-        submeshes: vec![
-            SubMesh {
-                material_name: Some("Left".to_string()),
-                material_id: 0,
-                source_material_id: None,
-                first_index: 0,
-                num_indices: 3,
-                first_vertex: 0,
-                num_vertices: 3,
-                node_parent_index: 1,
-            },
-            SubMesh {
-                material_name: Some("Right".to_string()),
-                material_id: 1,
-                source_material_id: None,
-                first_index: 0,
-                num_indices: 3,
-                first_vertex: 0,
-                num_vertices: 3,
-                node_parent_index: 2,
-            },
-        ],
-        model_min: [0.0; 3],
-        model_max: [1.0; 3],
-        scaling_min: [0.0; 3],
-        scaling_max: [1.0; 3],
-        skin: None,
-        morph_targets: Vec::new(),
-    };
-    let identity = [
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-    ];
-    let nmc = NodeMeshCombo {
-        nodes: vec![
-            crate::nmc::NmcNode {
-                name: "asset".to_string(),
-                parent_index: None,
-                world_to_bone: identity,
-                bone_to_world: identity,
-                scale: [1.0; 3],
-                geometry_type: 0,
-                properties: HashMap::new(),
-            },
-            crate::nmc::NmcNode {
-                name: "geo_left".to_string(),
-                parent_index: Some(0),
-                world_to_bone: identity,
-                bone_to_world: identity,
-                scale: [1.0; 3],
-                geometry_type: 0,
-                properties: HashMap::new(),
-            },
-            crate::nmc::NmcNode {
-                name: "geo_right".to_string(),
-                parent_index: Some(0),
-                world_to_bone: identity,
-                bone_to_world: identity,
-                scale: [1.0; 3],
-                geometry_type: 0,
-                properties: HashMap::new(),
-            },
-        ],
-        material_indices: vec![],
-    };
-
-    assert_eq!(
-        linked_scene_object_names("asset_LOD0", &mesh, Some(&nmc)),
-        vec!["geo_left".to_string(), "geo_right".to_string()]
-    );
-    assert_eq!(
-        linked_scene_object_names("asset_LOD0", &mesh, None),
-        vec!["asset_LOD0".to_string()]
     );
 }
 
@@ -2184,76 +2094,6 @@ fn scene_blend_makes_duplicate_light_id_names_unique() {
     assert!(lamp_names.iter().any(|name| name == "RepeatedLight_001"));
 }
 
-/// Helper to create a minimal DecomposedInput for testing
-fn create_test_input(entity_name: &str, num_children: usize) -> DecomposedInput {
-    let root_mesh = Mesh {
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        indices: vec![0, 1, 2],
-        uvs: None,
-        secondary_uvs: None,
-        normals: None,
-        tangents: None,
-        colors: None,
-        submeshes: vec![],
-        model_min: [0.0, 0.0, 0.0],
-        model_max: [1.0, 1.0, 0.0],
-        scaling_min: [0.0, 0.0, 0.0],
-        scaling_max: [1.0, 1.0, 0.0],
-        skin: None,
-        morph_targets: Vec::new(),
-    };
-
-    let mut children = Vec::new();
-    for i in 0..num_children {
-        children.push(crate::types::EntityPayload {
-            mesh: root_mesh.clone(),
-            materials: None,
-            textures: None,
-            nmc: None,
-            palette: None,
-            geometry_path: format!("path/to/mesh_{}", i),
-            material_path: format!("path/to/mat_{}", i),
-            bones: vec![],
-            skeleton_source_path: None,
-            entity_name: format!("child_{}", i),
-            entity_category: None,
-            attach_def_type: None,
-            parent_node_name: "Root".to_string(),
-            parent_entity_name: entity_name.to_string(),
-            no_rotation: false,
-            offset_position: [0.0, 0.0, 0.0],
-            offset_rotation: [0.0, 0.0, 0.0],
-            detach_direction: [0.0, 0.0, 0.0],
-            port_flags: String::new(),
-            ui_bindings: Vec::new(),
-        });
-    }
-
-    DecomposedInput {
-        entity_name: entity_name.to_string(),
-        geometry_path: "path/to/geometry".to_string(),
-        material_path: "path/to/materials".to_string(),
-        assembly_kind: None,
-        weapon_assembly: None,
-        weapon_assembly_diagnostics: None,
-        root_mesh,
-        root_materials: None,
-        root_nmc: None,
-        root_palette: None,
-        available_palettes: vec![],
-        root_bones: vec![],
-        root_skeleton_source_path: None,
-        root_animation_controller: None,
-        children,
-        interiors: LoadedInteriors {
-            unique_cgfs: vec![],
-            containers: vec![],
-        },
-        paint_variants: vec![],
-        animations: Vec::new(),
-    }
-}
-
 #[test]
 fn test_manifest_scene_transform_uses_gltf_y_up_local_transform() {
     let record = serde_json::json!({
@@ -2594,7 +2434,6 @@ fn test_create_scene_blend_objects_do_not_parent_to_collections() {
         radius_source: 10.0,
         spot_size: 0.0,
         spot_blend: 0.0,
-        intensity_candela: 5.0,
         temperature_k: 3000.0,
         use_temperature: false,
         gobo_path: None,
