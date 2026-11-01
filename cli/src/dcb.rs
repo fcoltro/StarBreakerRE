@@ -9,7 +9,7 @@ use starbreaker_datacore::query::value::Value;
 use crate::common::{load_dcb, load_dcb_bytes, matches_filter};
 use crate::error::{CliError, Result};
 
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum)]
 pub enum DcbFormat {
     Json,
     Xml,
@@ -146,7 +146,7 @@ fn extract(
 
     std::fs::create_dir_all(&output)?;
 
-    records.par_iter().for_each(|record| {
+    records.par_iter().for_each_init(Vec::new, |buf, record| {
         let file_name = db.resolve_string(record.file_name_offset);
         // Change extension to match output format (C# uses Path.ChangeExtension)
         let stem = match file_name.rfind('.') {
@@ -173,15 +173,22 @@ fn extract(
             }
         }
 
+        if buf.capacity() > 8 * 1024 * 1024 {
+            *buf = Vec::new();
+        } else {
+            buf.clear();
+        }
         let result = match format {
-            DcbFormat::Json => starbreaker_datacore::export::to_json(&db, record),
-            DcbFormat::Unp4k => starbreaker_datacore::export::to_unp4k_xml(&db, record),
-            DcbFormat::Xml => starbreaker_datacore::export::to_xml(&db, record),
+            DcbFormat::Json => starbreaker_datacore::export::write_json(&db, record, &mut *buf),
+            DcbFormat::Unp4k => {
+                starbreaker_datacore::export::unp4k_xml::write_unp4k_xml(&db, record, &mut *buf)
+            }
+            DcbFormat::Xml => starbreaker_datacore::export::write_xml(&db, record, &mut *buf),
         };
 
         match result {
-            Ok(data) => {
-                if let Err(e) = std::fs::write(&out_path, &data) {
+            Ok(()) => {
+                if let Err(e) = std::fs::write(&out_path, &*buf) {
                     eprintln!("Error writing {out_name}: {e}");
                 }
             }

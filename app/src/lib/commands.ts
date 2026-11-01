@@ -701,3 +701,234 @@ export async function dnaExpressionAnimGlb(
 ): Promise<ArrayBuffer> {
   return invoke<ArrayBuffer>("dna_expression_anim_glb", { dna, emotion, variation, intensity });
 }
+
+// ── Diff types ──
+
+export interface ArchiveEntryInventory {
+  path: string;
+  normalized_path: string;
+  crc32: number;
+  compressed_size: number;
+  uncompressed_size: number;
+  compression_method: number;
+  encrypted: boolean;
+  last_modified: number;
+}
+
+export interface DataCoreRecordInventory {
+  id: string;
+  record_type: string;
+  name: string;
+  path: string;
+  content_hash: string;
+}
+
+export type DataCoreInventory =
+  | { source_path: string | null; status: "present"; records: DataCoreRecordInventory[] }
+  | { source_path: string | null; status: "skipped" };
+
+export interface InventoryReport {
+  schema_version: number;
+  mode: "full" | "p4k_only";
+  generated_by: string;
+  generated_at_unix: number;
+  source: {
+    label: string;
+    source_file: {
+      path_hint: string;
+      size: number | null;
+      modified_unix: number | null;
+      entry_count: number;
+    } | null;
+    build_manifest?: {
+      branch: string | null;
+      version: string | null;
+      requested_p4_change_num: number | null;
+      channel_hint: string | null;
+    };
+    warnings: string[];
+  };
+  archive: ArchiveEntryInventory[];
+  datacore: DataCoreInventory;
+  inventory_hash: string;
+}
+
+export interface DiffInventoryHandle {
+  id: string;
+  label: string;
+  mode: "full" | "p4k_only";
+  path_hint: string | null;
+  archive_count: number;
+  datacore_count: number;
+  inventory_hash: string;
+  warnings: string[];
+}
+
+export type DiffStatus = "added" | "removed" | "modified" | "metadata_changed" | "unchanged";
+export type DiffTier = "p4k" | "data_core";
+
+export type DiffSide =
+  | { archive: ArchiveEntryInventory }
+  | { data_core: DataCoreRecordInventory };
+
+export interface DiffItem {
+  tier: DiffTier;
+  status: DiffStatus;
+  key: string;
+  display: string;
+  old: DiffSide | null;
+  new: DiffSide | null;
+  reasons: string[];
+}
+
+export interface DiffSummary {
+  added: number;
+  removed: number;
+  modified: number;
+  metadata_changed: number;
+  unchanged: number;
+  p4k_items: number;
+  datacore_items: number;
+}
+
+export interface DiffReport {
+  schema_version: number;
+  old_label: string;
+  new_label: string;
+  old_inventory_hash: string;
+  new_inventory_hash: string;
+  summary: DiffSummary;
+  items: DiffItem[];
+}
+
+export interface DiffPage extends DiffReport {
+  total_matching: number;
+  offset: number;
+  limit: number;
+}
+
+export interface DiffFilter {
+  search?: string | null;
+  tiers: DiffTier[];
+  statuses: DiffStatus[];
+  extensions: string[];
+  record_types: string[];
+  path_prefixes: string[];
+  include_unchanged: boolean;
+}
+
+export interface DiffInventoryProgress {
+  job_id: string;
+  phase: string;
+  current: number | null;
+  total: number | null;
+  message: string;
+}
+
+export async function browseDiffSource(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    title: "Select P4k or inventory report",
+    filters: [
+      { name: "Diff sources", extensions: ["p4k", "json"] },
+      { name: "P4k archive", extensions: ["p4k"] },
+      { name: "Inventory report", extensions: ["json"] },
+    ],
+    multiple: false,
+    directory: false,
+  });
+  return result ?? null;
+}
+
+export async function browseInventorySavePath(defaultPath?: string): Promise<string | null> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const result = await save({
+    title: "Save inventory report",
+    defaultPath,
+    filters: [{ name: "Inventory report", extensions: ["json"] }],
+  });
+  return result ?? null;
+}
+
+export async function browseDiffSavePath(defaultPath?: string): Promise<string | null> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const result = await save({
+    title: "Save diff report",
+    defaultPath,
+    filters: [{ name: "Diff report", extensions: ["json"] }],
+  });
+  return result ?? null;
+}
+
+export function onDiffInventoryProgress(
+  callback: (progress: DiffInventoryProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<DiffInventoryProgress>("diff-inventory-progress", (event) => {
+    callback(event.payload);
+  });
+}
+
+export async function diffGenerateInventory(
+  path: string,
+  skipDatacore: boolean,
+  jobId: string,
+  label?: string,
+): Promise<DiffInventoryHandle> {
+  return invoke<DiffInventoryHandle>("diff_generate_inventory", {
+    path,
+    skipDatacore,
+    label: label ?? null,
+    jobId,
+  });
+}
+
+export async function diffCancelInventory(): Promise<void> {
+  return invoke<void>("diff_cancel_inventory");
+}
+
+export async function diffLoadInventoryReport(path: string): Promise<DiffInventoryHandle> {
+  return invoke<DiffInventoryHandle>("diff_load_inventory_report", { path });
+}
+
+export async function diffSaveInventoryReport(
+  path: string,
+  id: string,
+): Promise<void> {
+  return invoke<void>("diff_save_inventory_report", { path, id });
+}
+
+export async function diffCompareReports(
+  oldId: string,
+  newId: string,
+  includeUnchanged: boolean,
+  filter?: DiffFilter,
+  maxItems = 5000,
+): Promise<DiffReport> {
+  return invoke<DiffReport>("diff_compare_reports", {
+    oldId,
+    newId,
+    includeUnchanged,
+    filter: filter ?? null,
+    maxItems,
+  });
+}
+
+export async function diffQueryReportPage(
+  oldId: string,
+  newId: string,
+  filter: DiffFilter,
+  offset: number,
+  limit: number,
+): Promise<DiffPage> {
+  return invoke<DiffPage>("diff_query_report_page", {
+    oldId,
+    newId,
+    filter,
+    offset,
+    limit,
+  });
+}
+
+export async function diffSaveDiffReport(path: string, report: DiffReport): Promise<void> {
+  return invoke<void>("diff_save_diff_report", { path, report });
+}

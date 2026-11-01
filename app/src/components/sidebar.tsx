@@ -1,4 +1,4 @@
-import { Archive, Database, Box, Boxes, Shield, Volume2, User, type LucideIcon } from "lucide-react";
+import { Archive, Database, Box, Boxes, Shield, Volume2, User, GitCompare, type LucideIcon } from "lucide-react";
 import { useAppStore, type AppMode } from "../stores/app-store";
 import { getAppVersion, type AppVersion } from "../lib/commands";
 import { useEffect, useState } from "react";
@@ -25,6 +25,7 @@ const modes: ModeButton[] = [
   { id: "socpak-export", label: "Socpak Export", icon: Boxes },
   { id: "audio", label: "Audio", icon: Volume2 },
   { id: "character", label: "Character", icon: User },
+  { id: "diff", label: "Diff", icon: GitCompare },
 ];
 
 export function Sidebar() {
@@ -62,7 +63,7 @@ export function Sidebar() {
           <button
             key={m.id}
             onClick={() => setMode(m.id)}
-            disabled={!hasData}
+            disabled={!hasData && m.id !== "diff"}
             className={`
               flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium
               transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed

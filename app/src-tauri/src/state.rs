@@ -15,6 +15,9 @@ pub struct AppState {
     pub p4k: Mutex<Option<Arc<MappedP4k>>>,
     pub dcb_bytes: Mutex<Option<Vec<u8>>>,
     pub export_cancel: Arc<AtomicBool>,
+    pub diff_cancel: Arc<AtomicBool>,
+    pub diff_inventories: Mutex<HashMap<String, starbreaker_diff::InventoryReport>>,
+    pub diff_sessions: Mutex<HashMap<String, DiffSession>>,
     /// Localization strings from Data\Localization\english\global.ini.
     /// Keys are lowercase for case-insensitive lookup.
     pub localization: Mutex<HashMap<String, String>>,
@@ -39,6 +42,9 @@ impl AppState {
             p4k: Mutex::new(None),
             dcb_bytes: Mutex::new(None),
             export_cancel: Arc::new(AtomicBool::new(false)),
+            diff_cancel: Arc::new(AtomicBool::new(false)),
+            diff_inventories: Mutex::new(HashMap::new()),
+            diff_sessions: Mutex::new(HashMap::new()),
             localization: Mutex::new(HashMap::new()),
             record_index: Mutex::new(None),
             atl_index: Mutex::new(None),
@@ -48,6 +54,11 @@ impl AppState {
             head_contexts: Mutex::new(HashMap::new()),
         }
     }
+}
+
+pub struct DiffSession {
+    pub report: starbreaker_diff::DiffReport,
+    pub filter_indexes: HashMap<String, Vec<usize>>,
 }
 
 /// Parse a global.ini localization file into a key→value map.

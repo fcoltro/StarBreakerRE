@@ -23,6 +23,8 @@ pub enum CliError {
     #[error(transparent)]
     DataCoreParse(#[from] starbreaker_datacore::error::ParseError),
     #[error(transparent)]
+    Diff(#[from] starbreaker_diff::DiffError),
+    #[error(transparent)]
     Dds(#[from] DdsError),
     #[error(transparent)]
     Wwise(#[from] BnkError),

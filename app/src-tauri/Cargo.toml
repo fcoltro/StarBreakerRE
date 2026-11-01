@@ -21,6 +21,7 @@ starbreaker-wwise = { workspace = true }
 starbreaker-wem = { workspace = true }
 starbreaker-cryxml = { workspace = true }
 starbreaker-dds = { workspace = true }
+starbreaker-diff = { workspace = true }
 image = { workspace = true, features = ["png"] }
 tokio = { workspace = true, features = ["rt"] }
 rayon = { workspace = true }

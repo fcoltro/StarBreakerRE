@@ -64,6 +64,7 @@ starbreaker-common = { path = "crates/starbreaker-common" }
 starbreaker-cryxml = { path = "crates/starbreaker-cryxml" }
 starbreaker-datacore = { path = "crates/starbreaker-datacore" }
 starbreaker-dds = { path = "crates/starbreaker-dds" }
+starbreaker-diff = { path = "crates/starbreaker-diff" }
 starbreaker-dna = { path = "crates/starbreaker-dna" }
 starbreaker-gfx = { path = "crates/starbreaker-gfx" }
 starbreaker-p4k = { path = "crates/starbreaker-p4k" }

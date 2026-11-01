@@ -11,6 +11,10 @@ authoritative usage. Global options: `-v` / `-vv` for debug / trace logging,
 
 - `p4k` — list and extract files from `Data.p4k`, optionally converting them
 - `dcb` — query and extract DataCore records (JSON / XML)
+- `diff` — compare game builds: `inventory` hashes a build's P4k entries and
+  DataCore records into a reusable report, `compare` diffs two builds or
+  reports, `report` writes a text tree (P4k listing, extracted contents,
+  classic DataCore XML/JSON) to diff with git or any diff tool
 - `entity` — export an entity (ship, vehicle, prop, armour piece) to GLB or a
   decomposed package; print its loadout; validate a decomposed export
 - `skin` — export or inspect individual meshes

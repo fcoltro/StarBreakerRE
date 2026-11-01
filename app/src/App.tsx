@@ -9,6 +9,7 @@ import { ExportView } from "./views/export-view";
 import { SocpakExportView } from "./views/socpak-export-view";
 import { AudioView } from "./views/audio-view";
 import { CharacterBuilder } from "./views/character-builder";
+import { DiffView } from "./views/diff-view";
 import { getSystemTheme, onSystemThemeChanged } from "./lib/commands";
 import { applySystemTheme } from "./lib/theme";
 
@@ -23,7 +24,7 @@ function App() {
     return () => { unlisten.then((f) => f()); };
   }, []);
 
-  if (!hasData) {
+  if (!hasData && mode !== "diff") {
     return <StartupScreen />;
   }
 
@@ -39,6 +40,7 @@ function App() {
           {mode === "socpak-export" && <SocpakExportView />}
           {mode === "audio" && <AudioView />}
           {mode === "character" && <CharacterBuilder />}
+          {mode === "diff" && <DiffView />}
         </main>
       </div>
     </div>
