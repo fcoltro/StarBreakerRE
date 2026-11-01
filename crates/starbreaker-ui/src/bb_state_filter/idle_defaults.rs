@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::bb_scene::BbNodeId;
 use super::eval::{
-    parse_points_to_ptr_value,
     parse_ptr_id,
     resolve_op_ref,
     resolve_op_ref_with_visited,
@@ -293,98 +292,6 @@ pub(super) fn scene_widget_boolean_param_count(
         }
     }
     count
-}
-
-#[allow(dead_code)]
-fn is_framing_hidden_set_field(
-    input_ref: &serde_json::Value,
-    widget_ptr: BbNodeId,
-    ops: &[serde_json::Value],
-) -> bool {
-    let mut ptr_to_op: HashMap<BbNodeId, &serde_json::Value> = HashMap::new();
-    for op in ops {
-        if let Some(p) = op
-            .get("_Pointer_")
-            .and_then(|v| v.as_str())
-            .and_then(parse_ptr_id)
-        {
-            ptr_to_op.insert(p, op);
-        }
-    }
-    let mut visited = HashSet::new();
-    let Some(input_op) = resolve_op_ref_with_visited(input_ref, &ptr_to_op, &mut visited) else {
-        return false;
-    };
-    if input_op.get("_Type_").and_then(|v| v.as_str())
-        != Some("BuildingBlocks_BindingsBooleanInvert")
-    {
-        return false;
-    }
-    let Some(inner_ref) = input_op.get("input") else {
-        return false;
-    };
-    let mut inner_visited = HashSet::new();
-    let Some(inner_op) = resolve_op_ref_with_visited(inner_ref, &ptr_to_op, &mut inner_visited) else {
-        return false;
-    };
-    if inner_op.get("_Type_").and_then(|v| v.as_str())
-        != Some("BuildingBlocks_BindingsBooleanEvaluateOr")
-    {
-        return false;
-    }
-
-    let mut vars = HashSet::new();
-    if let Some(inputs) = inner_op.get("inputs").and_then(|v| v.as_array()) {
-        for inp in inputs {
-            let mut var_visited = HashSet::new();
-            if let Some(var_op) = resolve_op_ref_with_visited(inp, &ptr_to_op, &mut var_visited) {
-                if var_op.get("_Type_").and_then(|v| v.as_str())
-                    == Some("BuildingBlocks_BindingsBooleanVariable")
-                {
-                    if let Some(binding) = var_op.get("binding").and_then(|v| v.as_str()) {
-                        vars.insert(binding.to_owned());
-                    }
-                }
-            }
-        }
-    }
-    if vars.is_empty() {
-        return false;
-    }
-
-    for op in ops {
-        if op.get("_Type_").and_then(|v| v.as_str())
-            != Some("BuildingBlocks_BindingsBooleanField")
-        {
-            continue;
-        }
-        let Some(other_widget) = parse_points_to_ptr_value(op.get("widget")) else {
-            continue;
-        };
-        if other_widget == widget_ptr {
-            continue;
-        }
-        let Some(other_input) = op.get("input") else {
-            continue;
-        };
-        let mut other_visited = HashSet::new();
-        let Some(other_op) = resolve_op_ref_with_visited(other_input, &ptr_to_op, &mut other_visited) else {
-            continue;
-        };
-        if other_op.get("_Type_").and_then(|v| v.as_str())
-            != Some("BuildingBlocks_BindingsBooleanVariable")
-        {
-            continue;
-        }
-        if other_op
-            .get("binding")
-            .and_then(|v| v.as_str())
-            .is_some_and(|binding| vars.contains(binding))
-        {
-            return true;
-        }
-    }
-    false
 }
 
 fn common_state_prefix(names: &[String]) -> Option<&str> {

@@ -1,10 +1,8 @@
 # StarBreaker
 
-[Download latest release](https://github.com/diogotr7/StarBreaker/releases/latest)
+[Download latest release](https://github.com/fcoltro/StarBreakerRE/releases/latest)
 
 Toolkit for reading and extracting Star Citizen game files. Handles the P4k archive, DataCore database, CryEngine assets, Wwise audio, and character files.
-
-There is also a legacy C# version on the [`master`](../../tree/master) branch.
 
 ## Crates
 
