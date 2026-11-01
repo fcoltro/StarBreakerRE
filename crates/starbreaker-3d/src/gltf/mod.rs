@@ -906,27 +906,31 @@ mod tests {
             occlusion: vec![Some(shared_png())],
             diffuse_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [2.0, 1.5],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             normal_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [1.0, 1.0],
+                offset: [0.0, 0.0],
                 tex_coord: 0,
             })],
             roughness_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [2.0, 1.5],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             emissive_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [1.25, 1.25],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             occlusion_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [1.0, 1.0],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             bundled_fallbacks: vec![vec![
                 "stencil_fallback".into(),
-                "screen_emissive_placeholder".into(),
                 "occlusion_from_mask".into(),
             ]],
         }
@@ -941,6 +945,7 @@ mod tests {
             occlusion: vec![None],
             diffuse_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [2.0, 1.5],
+                offset: [0.0, 0.0],
                 tex_coord: 0,
             })],
             normal_transform: vec![None],
@@ -960,19 +965,18 @@ mod tests {
             occlusion: vec![None],
             diffuse_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [4.0, 3.0],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             normal_transform: vec![None],
             roughness_transform: vec![None],
             emissive_transform: vec![Some(crate::types::TextureTransformInfo {
                 scale: [4.0, 3.0],
+                offset: [0.0, 0.0],
                 tex_coord: 1,
             })],
             occlusion_transform: vec![None],
-            bundled_fallbacks: vec![vec![
-                "rtt_placeholder".into(),
-                "screen_emissive_placeholder".into(),
-            ]],
+            bundled_fallbacks: vec![vec!["generated_ui".into()]],
         }
     }
 
@@ -1529,6 +1533,7 @@ mod tests {
             "KHR_materials_transmission",
             "KHR_materials_ior",
             "KHR_materials_volume",
+            "KHR_materials_specular",
             "KHR_materials_emissive_strength",
             "KHR_texture_transform",
         ] {
@@ -1595,30 +1600,17 @@ mod tests {
                 .as_f64()
                 .expect("emissive strength should be present");
         assert!((emissive_strength - 2.4).abs() < 1e-6);
-        assert!(
-            (material["extensions"]["KHR_materials_ior"]["ior"]
-                .as_f64()
-                .unwrap()
-                - 1.65)
-                .abs()
-                < 1e-6
-        );
-        assert!(
-            (material["extensions"]["KHR_materials_volume"]["thicknessFactor"]
-                .as_f64()
-                .unwrap()
-                - 0.12)
-                .abs()
-                < 1e-6
-        );
-        assert!(
-            (material["extensions"]["KHR_materials_volume"]["attenuationDistance"]
-                .as_f64()
-                .unwrap()
-                - 0.75)
-                .abs()
-                < 1e-6
-        );
+        assert!((material["extensions"]["KHR_materials_ior"]["ior"].as_f64().unwrap() - 1.65).abs() < 1e-6);
+        assert!((material["extensions"]["KHR_materials_volume"]["thicknessFactor"].as_f64().unwrap() - 0.12).abs() < 1e-6);
+        assert!((material["extensions"]["KHR_materials_volume"]["attenuationDistance"].as_f64().unwrap() - 0.75).abs() < 1e-6);
+        assert!((material["extensions"]["KHR_materials_specular"]["specularFactor"].as_f64().unwrap() - 8.0).abs() < 1e-6);
+        let specular_color = material["extensions"]["KHR_materials_specular"]["specularColorFactor"]
+            .as_array()
+            .expect("palette finish specular color should be represented in portable PBR");
+        assert!((specular_color[0].as_f64().unwrap() - 0.375).abs() < 1e-6);
+        assert!((specular_color[1].as_f64().unwrap() - 0.6875).abs() < 1e-6);
+        assert!((specular_color[2].as_f64().unwrap() - 1.0).abs() < 1e-6);
+        assert!((material["pbrMetallicRoughness"]["roughnessFactor"].as_f64().unwrap() - 1.0).abs() < 1e-6);
 
         let fallbacks = material["extras"]["semantic"]["bundled_fallbacks"]
             .as_array()
@@ -1628,8 +1620,130 @@ mod tests {
             .filter_map(|value| value.as_str())
             .collect();
         assert!(fallback_names.contains(&"stencil_fallback"));
-        assert!(fallback_names.contains(&"screen_emissive_placeholder"));
         assert!(fallback_names.contains(&"occlusion_from_mask"));
+    }
+
+    #[test]
+    fn write_glb_textures_mode_keeps_authored_roughness_and_all_uv_transforms() {
+        let mut textures = phase_two_textures();
+        textures.normal_transform[0] = Some(crate::types::TextureTransformInfo {
+            scale: [3.0, 2.0],
+            offset: [0.25, 0.5],
+            tex_coord: 0,
+        });
+        textures.occlusion_transform[0] = Some(crate::types::TextureTransformInfo {
+            scale: [4.0, 5.0],
+            offset: [0.0, 0.0],
+            tex_coord: 1,
+        });
+
+        let glb = write_glb(
+            GlbInput {
+                root_mesh: Some(triangle_mesh()),
+                root_materials: Some(phase_two_material_file()),
+                root_textures: Some(textures),
+                root_nmc: None,
+                root_palette: Some(named_palette()),
+                skeleton_bones: Vec::new(),
+                children: Vec::new(),
+                interiors: crate::pipeline::LoadedInteriors::default(),
+                animations: Vec::new(),
+            },
+            &mut GlbLoaders {
+                load_textures: &mut |_, _| None,
+                load_interior_mesh: &mut |_| None,
+            },
+            &textured_opts(),
+        )
+        .expect("write_glb failed");
+
+        let json = glb_json(&glb);
+        let material = &json["materials"][0];
+        assert!(
+            material["pbrMetallicRoughness"]["metallicRoughnessTexture"].is_object(),
+            "standard textures mode must preserve authored DDNA smoothness as roughness",
+        );
+        assert_eq!(
+            material["normalTexture"]["extensions"]["KHR_texture_transform"]["scale"],
+            serde_json::json!([3.0, 2.0]),
+        );
+        assert_eq!(
+            material["normalTexture"]["extensions"]["KHR_texture_transform"]["offset"],
+            serde_json::json!([0.25, 0.5]),
+        );
+        assert_eq!(
+            material["occlusionTexture"]["extensions"]["KHR_texture_transform"]["scale"],
+            serde_json::json!([4.0, 5.0]),
+        );
+        assert_eq!(
+            material["occlusionTexture"]["extensions"]["KHR_texture_transform"]["texCoord"],
+            serde_json::json!(1),
+        );
+    }
+
+    #[test]
+    fn write_glb_glass_omits_unauthored_volume_values() {
+        let mut materials = phase_two_material_file();
+        materials.materials[0].public_params.clear();
+
+        let glb = write_glb(
+            GlbInput {
+                root_mesh: Some(triangle_mesh()),
+                root_materials: Some(materials),
+                root_textures: None,
+                root_nmc: None,
+                root_palette: None,
+                skeleton_bones: Vec::new(),
+                children: Vec::new(),
+                interiors: crate::pipeline::LoadedInteriors::default(),
+                animations: Vec::new(),
+            },
+            &mut GlbLoaders {
+                load_textures: &mut |_, _| None,
+                load_interior_mesh: &mut |_| None,
+            },
+            &default_opts(),
+        )
+        .expect("write_glb failed");
+
+        let extensions = &glb_json(&glb)["materials"][0]["extensions"];
+        assert!(extensions["KHR_materials_transmission"].is_object());
+        assert!(
+            extensions["KHR_materials_ior"].is_null(),
+            "glTF's standard IOR default should apply when the MTL does not author one",
+        );
+        assert!(
+            extensions["KHR_materials_volume"].is_null(),
+            "volume must not contain invented thickness or attenuation values",
+        );
+    }
+
+    #[test]
+    fn write_glb_uses_palette_finish_glossiness_without_a_roughness_texture() {
+        let glb = write_glb(
+            GlbInput {
+                root_mesh: Some(triangle_mesh()),
+                root_materials: Some(phase_two_material_file()),
+                root_textures: None,
+                root_nmc: None,
+                root_palette: Some(named_palette()),
+                skeleton_bones: Vec::new(),
+                children: Vec::new(),
+                interiors: crate::pipeline::LoadedInteriors::default(),
+                animations: Vec::new(),
+            },
+            &mut GlbLoaders {
+                load_textures: &mut |_, _| None,
+                load_interior_mesh: &mut |_| None,
+            },
+            &default_opts(),
+        )
+        .expect("write_glb failed");
+
+        let roughness = glb_json(&glb)["materials"][0]["pbrMetallicRoughness"]["roughnessFactor"]
+            .as_f64()
+            .expect("roughness factor");
+        assert!((roughness - 0.55).abs() < 1e-6);
     }
 
     #[test]
@@ -2113,7 +2227,7 @@ mod tests {
                     "is_decal": false,
                     "is_glass": true,
                     "activation_state": {"state": "active", "reason": "visible"},
-                    "bundled_fallbacks": ["stencil_fallback", "screen_emissive_placeholder", "occlusion_from_mask"],
+                    "bundled_fallbacks": ["stencil_fallback", "occlusion_from_mask"],
                     "palette_channel": "glass",
                     "layer_manifest_len": 0,
                 },
@@ -2167,7 +2281,7 @@ mod tests {
                     "is_decal": false,
                     "is_glass": false,
                     "activation_state": {"state": "active", "reason": "visible"},
-                    "bundled_fallbacks": ["rtt_placeholder", "screen_emissive_placeholder"],
+                    "bundled_fallbacks": ["generated_ui"],
                     "palette_channel": serde_json::Value::Null,
                     "layer_manifest_len": 0,
                 },

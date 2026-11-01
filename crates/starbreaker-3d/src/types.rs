@@ -667,6 +667,7 @@ pub fn build_mesh_with_rig(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureTransformInfo {
     pub scale: [f32; 2],
+    pub offset: [f32; 2],
     pub tex_coord: u32,
 }
 
@@ -829,6 +830,9 @@ pub struct UiBinding {
     pub owner_source_file: Option<String>,
     pub runtime_image_source: Option<String>,
     pub generated_image_path: Option<String>,
+    /// In-memory PNG used only while assembling a one-shot bundled GLB.
+    /// Decomposed exports write the same rendered content to `generated_image_path`.
+    pub bundled_image_data: Option<Vec<u8>>,
     pub generated_context_manifest_path: Option<String>,
     pub generated_resolved_source_path: Option<String>,
     pub generated_backend: Option<String>,

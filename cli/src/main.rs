@@ -14,6 +14,7 @@ mod p4k;
 mod riglogic;
 mod skin;
 mod socpak;
+mod swf;
 mod ui;
 mod wwise;
 
@@ -152,6 +153,11 @@ enum Command {
         #[command(subcommand)]
         command: wwise::WwiseCommand,
     },
+    /// SWF / GFX operations (font extraction)
+    Swf {
+        #[command(subcommand)]
+        command: swf::SwfCommand,
+    },
     /// NMC (Node Mesh Combo) chunk inspection from `.cga` / `.cgf` files
     Nmc {
         #[command(subcommand)]
@@ -222,6 +228,7 @@ fn main() {
         Command::Chf { command } => command.run(),
         Command::Armour { command } => command.run(),
         Command::Wwise { command } => command.run(),
+        Command::Swf { command } => command.run(),
         Command::Nmc { command } => command.run(),
         Command::Ui { command } => command.run(),
         Command::Animation { command } => command.run(),

@@ -3468,7 +3468,7 @@ fn generated_ui_asset_name(binding: &UiBinding) -> String {
 /// to any single ship or component).  Per-component manufacturer overrides
 /// (e.g. a Bioticorp medical bay installed on a Drake ship) are deferred to
 /// Phase A5 of the UI plan and require DataCore record traversal.
-fn derive_manufacturer_id(root_entity_name: &str) -> Option<String> {
+pub(crate) fn derive_manufacturer_id(root_entity_name: &str) -> Option<String> {
     let prefix = root_entity_name
         .split(|c: char| c == '_' || c == '-' || c.is_whitespace())
         .next()
@@ -3571,6 +3571,7 @@ mod manufacturer_id_tests {
             owner_source_file: None,
             runtime_image_source: None,
             generated_image_path: None,
+            bundled_image_data: None,
             generated_context_manifest_path: None,
             generated_resolved_source_path: None,
             generated_backend: None,
@@ -4781,7 +4782,7 @@ fn texture_load_keys_from_materials(materials: &MtlFile) -> Vec<(String, Texture
 /// (localization, ship data, manufacturer, root entity) is constant per export.
 /// `f32` aspect is stored as raw bits so the key is `Hash + Eq`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct UiRenderKey {
+pub(crate) struct UiRenderKey {
     canvas_guid: Option<String>,
     content_canvas_guid: Option<String>,
     binding_kind: String,
@@ -4797,7 +4798,7 @@ struct UiRenderKey {
 }
 
 /// Build the render-identity key for `binding` (see [`UiRenderKey`]).
-fn ui_render_key(binding: &UiBinding) -> UiRenderKey {
+pub(crate) fn ui_render_key(binding: &UiBinding) -> UiRenderKey {
     UiRenderKey {
         canvas_guid: binding.canvas_guid.clone(),
         content_canvas_guid: binding.content_canvas_guid.clone(),
@@ -4819,7 +4820,7 @@ fn ui_render_key(binding: &UiBinding) -> UiRenderKey {
 /// work (hundreds of screens, mostly duplicates) to one render per unique
 /// screen. Output is unchanged: the per-binding record builder still computes
 /// each binding's own export path and provenance.
-fn prerender_ui_bindings(
+pub(crate) fn prerender_ui_bindings(
     bindings: &[&UiBinding],
     db: &Database<'_>,
     p4k: &MappedP4k,

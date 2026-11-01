@@ -1,0 +1,20 @@
+[package]
+name = "starbreaker-swf"
+version.workspace = true
+edition = "2024"
+description = "Embedded font extraction (SWF DefineFont3 -> TTF) for Star Citizen Scaleform UI files"
+
+[dependencies]
+swf = { workspace = true }
+write-fonts = "0.48"
+kurbo = "0.13"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+ttf-parser = "0.25"
+tiny-skia = "0.12"
+image = { workspace = true, features = ["png"] }
+
+[lints]
+workspace = true
