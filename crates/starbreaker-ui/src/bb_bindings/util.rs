@@ -14,63 +14,6 @@ pub(super) fn case_modifier_from_raw(node_raw: &serde_json::Value) -> &str {
         .unwrap_or("")
 }
 
-#[allow(dead_code)]
-pub(super) fn derive_label_from_name(name: &str) -> String {
-    let trimmed = name.trim();
-    let stripped = strip_widget_prefix(trimmed);
-    let stripped = strip_widget_suffix(stripped);
-    if stripped.is_empty() {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    let mut prev_lower = false;
-    let mut prev_alpha = false;
-    for ch in stripped.chars() {
-        if ch == '_' || ch == '-' {
-            if !out.ends_with(' ') && !out.is_empty() {
-                out.push(' ');
-            }
-            prev_lower = false;
-            prev_alpha = false;
-            continue;
-        }
-        if ch.is_uppercase() && prev_lower {
-            out.push(' ');
-        } else if ch.is_ascii_digit() && prev_alpha {
-            out.push(' ');
-        }
-        out.push(ch);
-        prev_lower = ch.is_lowercase();
-        prev_alpha = ch.is_alphabetic();
-    }
-    out.trim().to_owned()
-}
-
-#[allow(dead_code)]
-fn strip_widget_prefix(s: &str) -> &str {
-    const PREFIXES: &[&str] = &["text_", "txt_", "lbl_", "label_", "Text_", "Label_"];
-    for p in PREFIXES {
-        if let Some(rest) = s.strip_prefix(p) {
-            return rest;
-        }
-    }
-    s
-}
-
-#[allow(dead_code)]
-fn strip_widget_suffix(s: &str) -> &str {
-    const SUFFIXES: &[&str] = &["Text", "Label"];
-    for sfx in SUFFIXES {
-        if let Some(rest) = s.strip_suffix(sfx)
-            && !rest.is_empty()
-        {
-            return rest;
-        }
-    }
-    s
-}
-
 /// Whether a resolved label string is an empty / placeholder sentinel that
 /// carries no real content. Used so a component-parameter-driven label whose
 /// parameter is unset at rest (e.g. an inactive footer warning message) renders

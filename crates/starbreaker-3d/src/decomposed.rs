@@ -4199,11 +4199,11 @@ impl OutputFiles {
     pub(crate) fn contains_key(&self, key: &str) -> bool {
         self.files.contains_key(key)
     }
-    #[allow(dead_code)] // used by tests and the Phase-2 merge/logging
+    #[cfg(test)]
     pub(crate) fn get(&self, key: &str) -> Option<&Vec<u8>> {
         self.files.get(key)
     }
-    #[allow(dead_code)] // used by tests and the Phase-2 merge/logging
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.files.len()
     }

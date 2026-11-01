@@ -16,11 +16,9 @@ starbreaker-p4k = { workspace = true }
 starbreaker-datacore = { workspace = true }
 starbreaker-3d = { workspace = true }
 starbreaker-common = { workspace = true }
-starbreaker-blend = { workspace = true }
 starbreaker-cryxml = { workspace = true }
 starbreaker-dds = { workspace = true }
 starbreaker-diff = { workspace = true }
-starbreaker-gfx = { workspace = true }
 starbreaker-swf = { workspace = true }
 swf = { workspace = true }
 
