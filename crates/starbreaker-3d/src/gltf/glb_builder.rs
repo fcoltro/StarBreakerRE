@@ -38,6 +38,7 @@ struct TextureRegion {
 struct PackedInteriorMeshKey {
     cgf_index: usize,
     palette_hash: u64,
+    ui_hash: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -912,16 +913,23 @@ impl GlbBuilder {
             } else {
                 load_textures(child.materials.as_ref(), resolved_palette)
             };
+            let mut effective_textures = child.textures.take().or(loaded_textures);
+            crate::pipeline::apply_bundled_ui_materials(
+                &mut child.mesh,
+                &mut child.materials,
+                &mut effective_textures,
+                child.nmc.as_ref(),
+                &child.ui_bindings,
+            );
             let packed = self.pack_mesh(
                 &child.mesh,
                 child.materials.as_ref(),
-                child.textures.as_ref().or(loaded_textures.as_ref()),
+                effective_textures.as_ref(),
                 resolved_palette,
                 Some(&child.entity_name),
                 material_mode,
                 false,
             );
-            child.textures = None;
             child.mesh.positions = Vec::new();
             child.mesh.uvs = None;
             child.mesh.secondary_uvs = None;
@@ -1147,7 +1155,11 @@ impl GlbBuilder {
     ) -> (Vec<json::Index<json::Node>>, Vec<crate::types::LightInfo>) {
         // Cache loaded meshes by CGF index (mesh data + materials from P4k).
         // Mesh loading is expensive; packing with different palettes is cheap.
-        let mut mesh_cache: Vec<Option<(crate::types::Mesh, Option<crate::mtl::MtlFile>)>> =
+        let mut mesh_cache: Vec<Option<(
+            crate::types::Mesh,
+            Option<crate::mtl::MtlFile>,
+            Option<NodeMeshCombo>,
+        )>> =
             vec![None; interiors.unique_cgfs.len()];
 
         // Cache packed glTF mesh indices by (cgf_index, palette_key).
@@ -1178,10 +1190,12 @@ impl GlbBuilder {
                 // the container palette otherwise.
                 let effective_palette = placement_palette.or(palette);
                 let palette_key = tint_palette_hash(effective_palette);
+                let ui_hash = crate::pipeline::bundled_ui_hash(&placement.ui_bindings);
                 // Get or pack the mesh for this (cgf, palette) pair.
                 let cache_key = PackedInteriorMeshKey {
                     cgf_index: mesh_array_idx,
                     palette_hash: palette_key,
+                    ui_hash,
                 };
                 let gltf_mesh_idx = if let Some(&idx) = packed_cache.get(&cache_key) {
                     Some(idx)
@@ -1189,23 +1203,43 @@ impl GlbBuilder {
                     // Load mesh data (cached by CGF index).
                     if mesh_cache[mesh_array_idx].is_none() {
                         mesh_cache[mesh_array_idx] =
-                            load_interior_mesh(&interiors.unique_cgfs[mesh_array_idx])
-                                .map(|(mesh, mtl, _nmc)| (mesh, mtl));
+                            load_interior_mesh(&interiors.unique_cgfs[mesh_array_idx]);
                     }
-                    let Some((ref mesh, ref mtl)) = mesh_cache[mesh_array_idx] else {
+                    let Some((ref mesh, ref mtl, ref nmc)) = mesh_cache[mesh_array_idx] else {
                         packed_cache.insert(cache_key, u32::MAX);
                         continue;
                     };
-                    let textures = load_textures(mtl.as_ref(), effective_palette);
-                    let packed = self.pack_mesh(
-                        mesh,
-                        mtl.as_ref(),
-                        textures.as_ref(),
-                        effective_palette,
-                        Some(&interiors.unique_cgfs[mesh_array_idx].name),
-                        material_mode,
-                        false,
-                    );
+                    let mut textures = load_textures(mtl.as_ref(), effective_palette);
+                    let packed = if ui_hash == 0 {
+                        self.pack_mesh(
+                            mesh,
+                            mtl.as_ref(),
+                            textures.as_ref(),
+                            effective_palette,
+                            Some(&interiors.unique_cgfs[mesh_array_idx].name),
+                            material_mode,
+                            false,
+                        )
+                    } else {
+                        let mut specialized_mesh = mesh.clone();
+                        let mut specialized_mtl = mtl.clone();
+                        crate::pipeline::apply_bundled_ui_materials(
+                            &mut specialized_mesh,
+                            &mut specialized_mtl,
+                            &mut textures,
+                            nmc.as_ref(),
+                            &placement.ui_bindings,
+                        );
+                        self.pack_mesh(
+                            &specialized_mesh,
+                            specialized_mtl.as_ref(),
+                            textures.as_ref(),
+                            effective_palette,
+                            Some(&interiors.unique_cgfs[mesh_array_idx].name),
+                            material_mode,
+                            false,
+                        )
+                    };
                     packed_cache.insert(cache_key, packed.mesh_idx);
                     Some(packed.mesh_idx)
                 };
@@ -1245,6 +1279,7 @@ impl GlbBuilder {
                                 light: json::Index::new(light_idx as u32),
                             },
                         ),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 });
@@ -1654,6 +1689,19 @@ impl GlbBuilder {
         if self
             .materials_json
             .iter()
+            .any(|material| {
+                material
+                    .extensions
+                    .as_ref()
+                    .and_then(|extensions| extensions.specular.as_ref())
+                    .is_some()
+            })
+        {
+            extensions_used.push("KHR_materials_specular".to_string());
+        }
+        if self
+            .materials_json
+            .iter()
             .any(material_uses_texture_transform)
         {
             extensions_used.push("KHR_texture_transform".to_string());
@@ -1694,6 +1742,7 @@ impl GlbBuilder {
                 khr_lights_punctual: Some(json::extensions::root::KhrLightsPunctual {
                     lights: gltf_lights,
                 }),
+                ..Default::default()
             })
         } else {
             None
@@ -1852,18 +1901,26 @@ fn resolved_palette_finish_json(
     channel: u8,
     is_glass: bool,
 ) -> Option<serde_json::Value> {
-    let entry = match channel {
-        1 => Some(&palette.finish.primary),
-        2 => Some(&palette.finish.secondary),
-        3 => Some(&palette.finish.tertiary),
-        _ if is_glass => Some(&palette.finish.glass),
-        _ => None,
-    }?;
+    let entry = resolved_palette_finish_entry(palette, channel, is_glass)?;
 
     if entry.specular.is_some() || entry.glossiness.is_some() {
         Some(palette_finish_entry_json(entry))
     } else {
         None
+    }
+}
+
+fn resolved_palette_finish_entry(
+    palette: &crate::mtl::TintPalette,
+    channel: u8,
+    is_glass: bool,
+) -> Option<&crate::mtl::TintPaletteFinishEntry> {
+    match channel {
+        1 => Some(&palette.finish.primary),
+        2 => Some(&palette.finish.secondary),
+        3 => Some(&palette.finish.tertiary),
+        _ if is_glass => Some(&palette.finish.glass),
+        _ => None,
     }
 }
 
@@ -2458,8 +2515,10 @@ fn texture_transform_parts(
         return (0, None);
     };
 
-    let needs_transform =
-        (transform.scale[0] - 1.0).abs() > 1e-4 || (transform.scale[1] - 1.0).abs() > 1e-4;
+    let needs_transform = (transform.scale[0] - 1.0).abs() > 1e-4
+        || (transform.scale[1] - 1.0).abs() > 1e-4
+        || transform.offset[0].abs() > 1e-4
+        || transform.offset[1].abs() > 1e-4;
     let tex_coord = transform.tex_coord;
     if !needs_transform {
         return (tex_coord, None);
@@ -2467,7 +2526,7 @@ fn texture_transform_parts(
 
     let mut extension = json::extensions::texture::Info::default();
     extension.texture_transform = Some(json::extensions::texture::TextureTransform {
-        offset: json::extensions::texture::TextureTransformOffset([0.0, 0.0]),
+        offset: json::extensions::texture::TextureTransformOffset(transform.offset),
         rotation: json::extensions::texture::TextureTransformRotation(0.0),
         scale: json::extensions::texture::TextureTransformScale(transform.scale),
         tex_coord: (tex_coord != 0).then_some(tex_coord),
@@ -2494,11 +2553,21 @@ fn build_normal_texture(
     transform: Option<&TextureTransformInfo>,
 ) -> json::material::NormalTexture {
     let tex_coord = transform.map(|transform| transform.tex_coord).unwrap_or(0);
+    let extensions = transform.and_then(|transform| {
+        let (_, info) = texture_transform_parts(Some(transform));
+        let texture_transform = info?.texture_transform?;
+        let mut extensions = json::extensions::material::NormalTexture::default();
+        extensions.others.insert(
+            "KHR_texture_transform".to_string(),
+            serde_json::to_value(texture_transform).ok()?,
+        );
+        Some(extensions)
+    });
     json::material::NormalTexture {
         index: json::Index::new(tex_idx),
         scale: 1.0,
         tex_coord,
-        extensions: None,
+        extensions,
         extras: Default::default(),
     }
 }
@@ -2508,11 +2577,21 @@ fn build_occlusion_texture(
     transform: Option<&TextureTransformInfo>,
 ) -> json::material::OcclusionTexture {
     let tex_coord = transform.map(|transform| transform.tex_coord).unwrap_or(0);
+    let extensions = transform.and_then(|transform| {
+        let (_, info) = texture_transform_parts(Some(transform));
+        let texture_transform = info?.texture_transform?;
+        let mut extensions = json::extensions::material::OcclusionTexture::default();
+        extensions.others.insert(
+            "KHR_texture_transform".to_string(),
+            serde_json::to_value(texture_transform).ok()?,
+        );
+        Some(extensions)
+    });
     json::material::OcclusionTexture {
         index: json::Index::new(tex_idx),
         strength: json::material::StrengthFactor(1.0),
         tex_coord,
-        extensions: None,
+        extensions,
         extras: Default::default(),
     }
 }
@@ -2617,7 +2696,7 @@ fn build_material(
     submaterial_roughness_idx: &[Option<u32>],
     submaterial_emissive_idx: &[Option<u32>],
     submaterial_occlusion_idx: &[Option<u32>],
-    experimental_textures: bool,
+    _experimental_textures: bool,
     preserve_textureless_decal_primitives: bool,
 ) -> BuiltMaterial {
     let mtl_sub = materials.and_then(|m| m.materials.get(sub.material_id as usize));
@@ -2719,58 +2798,39 @@ fn build_material(
         .unwrap_or_default();
 
     let base_color_texture_idx = submaterial_texture_idx
+        .get(sub.material_id as usize).copied().flatten();
+    let base_color_texture = base_color_texture_idx
+        .map(|tex_idx| build_texture_info(tex_idx, diffuse_transform));
+    let normal_texture_idx = submaterial_normal_idx
         .get(sub.material_id as usize)
         .copied()
         .flatten();
-    let base_color_texture =
-        base_color_texture_idx.map(|tex_idx| build_texture_info(tex_idx, diffuse_transform));
-    // Only apply per-pixel normal/roughness when the material has a direct TexSlot1 diffuse.
-    // When textures come from MatLayer .mtl files (HardSurface/LayerBlend shaders), they are
-    // tileable detail patterns for one layer of CryEngine's multi-layer blending system.
-    // Applied standalone in glTF, the roughness variation creates extreme specular noise
-    // and the normals add unwanted surface perturbation. Use scalar values instead.
-    let allow_detail_textures =
-        experimental_textures || mtl_sub.is_some_and(|m| m.diffuse_tex.is_some());
-    let normal_texture_idx = if allow_detail_textures {
-        submaterial_normal_idx
-            .get(sub.material_id as usize)
-            .copied()
-            .flatten()
-    } else {
-        None
-    };
-    let normal_texture = if allow_detail_textures {
-        normal_texture_idx.map(|tex_idx| build_normal_texture(tex_idx, normal_transform))
-    } else {
-        None
-    };
+    let normal_texture = normal_texture_idx
+        .map(|tex_idx| build_normal_texture(tex_idx, normal_transform));
 
+    let palette_finish = mtl_sub.and_then(|material| {
+        palette.and_then(|palette| {
+            resolved_palette_finish_entry(palette, material.palette_tint, material.is_glass())
+        })
+    });
     let (roughness, metallic) = mtl_sub
-        .map(|m| (m.roughness(), material_metallic_factor(m)))
+        .map(|material| {
+            let roughness = palette_finish
+                .and_then(|finish| finish.glossiness)
+                .map(|glossiness| 1.0 - glossiness.clamp(0.0, 1.0))
+                .unwrap_or_else(|| material.roughness());
+            (roughness, material_metallic_factor(material))
+        })
         .unwrap_or((0.5, 0.0));
     let is_glass = mtl_sub.map(|m| m.is_glass()).unwrap_or(false);
 
-    // Per-pixel roughness creates visible specular noise in glTF PBR, especially on
-    // dark surfaces viewed up close. Only enable with --experimental-textures.
-    // Scalar roughness from MTL Shininess provides clean uniform glossiness.
-    let roughness_texture_idx = if experimental_textures {
-        submaterial_roughness_idx
-            .get(sub.material_id as usize)
-            .copied()
-            .flatten()
-    } else {
-        None
-    };
-    let roughness_texture = if experimental_textures {
-        roughness_texture_idx.map(|tex_idx| build_texture_info(tex_idx, roughness_transform))
-    } else {
-        None
-    };
-    let roughness_factor = if roughness_texture.is_some() {
-        1.0
-    } else {
-        roughness
-    };
+    let roughness_texture_idx = submaterial_roughness_idx
+        .get(sub.material_id as usize)
+        .copied()
+        .flatten();
+    let roughness_texture = roughness_texture_idx
+        .map(|tex_idx| build_texture_info(tex_idx, roughness_transform));
+    let roughness_factor = if roughness_texture.is_some() { 1.0 } else { roughness };
 
     let emissive_texture_idx = submaterial_emissive_idx
         .get(sub.material_id as usize)
@@ -2809,51 +2869,71 @@ fn build_material(
 
     let transmission_factor = mtl_sub
         .and_then(|material| material.public_param_f32(&["Transmission", "GlassTransmission"]))
-        .unwrap_or(if is_glass { 0.96 } else { 0.0 })
-        .clamp(0.0, 1.0);
+        .map(|value| value.clamp(0.0, 1.0))
+        .or_else(|| is_glass.then_some(1.0));
     let ior = mtl_sub
         .and_then(|material| material.public_param_f32(&["IOR", "GlassIOR", "RefractiveIndex"]))
-        .unwrap_or(1.5)
-        .clamp(1.0, 2.5);
+        .filter(|value| *value >= 1.0);
     let thickness_factor = mtl_sub
-        .and_then(|material| {
-            material.public_param_f32(&["Thickness", "GlassThickness", "RefractionDepth"])
-        })
-        .unwrap_or(0.02)
-        .max(0.0);
+        .and_then(|material| material.public_param_f32(&["Thickness", "GlassThickness", "RefractionDepth"]))
+        .filter(|value| *value >= 0.0);
     let attenuation_distance = mtl_sub
-        .and_then(|material| {
-            material.public_param_f32(&["AttenuationDistance", "AbsorptionDistance"])
-        })
-        .unwrap_or(0.25)
-        .max(0.001);
+        .and_then(|material| material.public_param_f32(&["AttenuationDistance", "AbsorptionDistance"]))
+        .filter(|value| *value > 0.0);
     let attenuation_color = mtl_sub
-        .and_then(|material| {
-            material.public_param_rgb(&["AbsorptionColor", "AttenuationColor", "TintColor"])
-        })
-        .or_else(|| palette.map(|palette| palette.glass))
-        .unwrap_or([1.0, 1.0, 1.0]);
+        .and_then(|material| material.public_param_rgb(&["AbsorptionColor", "AttenuationColor", "TintColor"]))
+        .or_else(|| palette.map(|palette| palette.glass));
 
     let mut mat_extensions = json::extensions::material::Material::default();
-    if is_glass {
-        mat_extensions.transmission = Some(json::extensions::material::Transmission {
-            transmission_factor: json::extensions::material::TransmissionFactor(
-                transmission_factor,
+    const GLTF_DIELECTRIC_F0: f32 = 0.04;
+    let specular = mtl_sub.and_then(|material| {
+        if metallic > 0.5 {
+            return None;
+        }
+        let source = palette_finish
+            .and_then(|finish| finish.specular)
+            .unwrap_or(material.specular);
+        let maximum = source.into_iter().fold(0.0f32, f32::max);
+        if maximum <= f32::EPSILON
+            || source
+                .iter()
+                .all(|value| (*value - GLTF_DIELECTRIC_F0).abs() <= 1e-4)
+        {
+            return None;
+        }
+        Some(json::extensions::material::Specular {
+            specular_factor: json::extensions::material::SpecularFactor(
+                maximum / GLTF_DIELECTRIC_F0,
             ),
+            specular_texture: None,
+            specular_color_factor: json::extensions::material::SpecularColorFactor([
+                source[0] / maximum,
+                source[1] / maximum,
+                source[2] / maximum,
+            ]),
+            specular_color_texture: None,
+            extras: Default::default(),
+        })
+    });
+    mat_extensions.specular = specular;
+    if is_glass {
+        mat_extensions.transmission = transmission_factor.map(|transmission_factor| json::extensions::material::Transmission {
+            transmission_factor: json::extensions::material::TransmissionFactor(transmission_factor),
             transmission_texture: None,
             extras: Default::default(),
         });
-        mat_extensions.ior = Some(json::extensions::material::Ior {
+        mat_extensions.ior = ior.map(|ior| json::extensions::material::Ior {
             ior: json::extensions::material::IndexOfRefraction(ior),
             extras: Default::default(),
         });
-        mat_extensions.volume = Some(json::extensions::material::Volume {
+        mat_extensions.volume = thickness_factor.zip(attenuation_distance).map(
+            |(thickness_factor, attenuation_distance)| json::extensions::material::Volume {
             thickness_factor: json::extensions::material::ThicknessFactor(thickness_factor),
             thickness_texture: None,
-            attenuation_distance: json::extensions::material::AttenuationDistance(
-                attenuation_distance,
+            attenuation_distance: json::extensions::material::AttenuationDistance(attenuation_distance),
+            attenuation_color: json::extensions::material::AttenuationColor(
+                attenuation_color.unwrap_or([1.0, 1.0, 1.0]),
             ),
-            attenuation_color: json::extensions::material::AttenuationColor(attenuation_color),
             extras: Default::default(),
         });
     }
@@ -2861,6 +2941,7 @@ fn build_material(
     let mat_extensions = if mat_extensions.transmission.is_some()
         || mat_extensions.ior.is_some()
         || mat_extensions.volume.is_some()
+        || mat_extensions.specular.is_some()
         || mat_extensions.emissive_strength.is_some()
     {
         Some(mat_extensions)

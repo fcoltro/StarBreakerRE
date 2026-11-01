@@ -578,7 +578,7 @@ export function SocpakExportView() {
                 ["none", "None"],
                 ["colors", "Colors"],
                 ["textures", "Textures"],
-                ["all", "All (experimental)"],
+                ["all", "All (compatibility)"],
               ] as const).map(([value, label]) => (
                 <label key={value} className="flex items-center gap-2 cursor-pointer group">
                   <input

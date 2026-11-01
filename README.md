@@ -106,7 +106,9 @@ Pre-creating directories... 31 directories created.
 
 ### Entity export
 
-Export a ship or vehicle as a GLB file with full loadout assembly — geometry, skeleton, materials, and textures.
+Export a ship or vehicle as one software-agnostic GLB with full loadout assembly —
+geometry, skeleton, portable PBR materials, embedded textures, and generated screen
+images. See [GLB export parity](docs/glb-export-parity.md) for the material contract.
 The name is a case-insensitive substring of the entity class name; the shortest match wins.
 Defaults are `--lod 1`, `--mip 2` (textures at 1/4 resolution) and `--materials textures`:
 

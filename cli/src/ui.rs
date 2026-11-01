@@ -273,6 +273,7 @@ fn parse_ui_binding(v: &Value) -> Option<UiBinding> {
         owner_source_file: opt_str("owner_source_file"),
         runtime_image_source: opt_str("runtime_image_source"),
         generated_image_path: opt_str("generated_image_path"),
+        bundled_image_data: None,
         generated_context_manifest_path: opt_str("generated_context_manifest_path"),
         generated_resolved_source_path: opt_str("generated_resolved_source_path"),
         generated_backend: opt_str("generated_backend"),
