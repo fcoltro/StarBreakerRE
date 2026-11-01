@@ -33,6 +33,8 @@ pub enum AppError {
     CryXml(#[from] starbreaker_cryxml::CryXmlError),
     #[error(transparent)]
     Dds(#[from] starbreaker_dds::DdsError),
+    #[error(transparent)]
+    Diff(#[from] starbreaker_diff::DiffError),
 
     #[error("{0}")]
     Internal(String),

@@ -16,6 +16,7 @@ export function StartupScreen() {
   const clearError = useAppStore((s) => s.clearError);
   const recentCustomPaths = useAppStore((s) => s.recentCustomPaths);
   const addRecentCustomPath = useAppStore((s) => s.addRecentCustomPath);
+  const setMode = useAppStore((s) => s.setMode);
 
   const hasDiscovered = useRef(false);
 
@@ -160,6 +161,14 @@ export function StartupScreen() {
                          hover:bg-primary/5 transition-colors cursor-pointer"
             >
               Browse for Data.p4k...
+            </button>
+            <button
+              onClick={() => setMode("diff")}
+              className="flex items-center justify-center gap-2 p-3 border border-border
+                         rounded-lg text-sm text-text-sub hover:text-text hover:border-info/50
+                         hover:bg-info/5 transition-colors cursor-pointer"
+            >
+              Open Diff Viewer
             </button>
           </div>
         )}

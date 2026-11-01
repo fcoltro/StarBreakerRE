@@ -19,6 +19,7 @@ starbreaker-common = { workspace = true }
 starbreaker-blend = { workspace = true }
 starbreaker-cryxml = { workspace = true }
 starbreaker-dds = { workspace = true }
+starbreaker-diff = { workspace = true }
 starbreaker-gfx = { workspace = true }
 
 clap = { workspace = true }
@@ -33,6 +34,7 @@ image = { workspace = true, features = ["png"] }
 serde_json = { workspace = true }
 parking_lot = { workspace = true }
 filetime = { workspace = true }
+structured-zstd = { workspace = true }
 
 # Dev-dependencies used only by examples (not shipped in the release binary).
 [dev-dependencies]

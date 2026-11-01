@@ -5,6 +5,7 @@ mod audio_commands;
 mod character_commands;
 mod commands;
 mod datacore_commands;
+mod diff_commands;
 mod error;
 mod socpak_category;
 mod state;
@@ -235,6 +236,13 @@ fn main() {
             datacore_commands::dc_get_backlinks,
             datacore_commands::dc_export_folder,
             datacore_commands::dc_export_records,
+            diff_commands::diff_generate_inventory,
+            diff_commands::diff_cancel_inventory,
+            diff_commands::diff_load_inventory_report,
+            diff_commands::diff_save_inventory_report,
+            diff_commands::diff_compare_reports,
+            diff_commands::diff_query_report_page,
+            diff_commands::diff_save_diff_report,
             audio_commands::audio_init,
             audio_commands::audio_search_entities,
             audio_commands::audio_search_triggers,
