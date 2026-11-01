@@ -1553,6 +1553,7 @@ mod tests {
             owner_source_file: None,
             runtime_image_source: None,
             generated_image_path: None,
+            bundled_image_data: None,
             generated_context_manifest_path: None,
             generated_resolved_source_path: None,
             generated_backend: None,

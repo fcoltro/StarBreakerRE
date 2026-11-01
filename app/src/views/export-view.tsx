@@ -746,8 +746,8 @@ export function ExportView({ armorOnly = false }: { armorOnly?: boolean }) {
                 {([
                   { value: "none", label: "None", tip: "Geometry only, no material data. Plain white surfaces." },
                   { value: "colors", label: "Colors", tip: "Palette and layer tint colors applied. No textures. Small file size." },
-                  { value: "textures", label: "Textures", tip: "Colors + diffuse, normal, and roughness textures for materials that have them." },
-                  { value: "all", label: "All (experimental)", tip: "Everything including heuristic approximations. Layer textures, alpha inference, decal classification. May not be correct." },
+                  { value: "textures", label: "Textures", tip: "Portable source-backed PBR textures, generated displays, and material extensions." },
+                  { value: "all", label: "All (compatibility)", tip: "Compatibility alias for Textures; retained for existing export settings." },
                 ] as const).map((opt) => (
                   <label
                     key={opt.value}
