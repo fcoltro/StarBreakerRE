@@ -11,9 +11,6 @@ Commands not covered there:
 ```bash
 # Tauri app (app/package.json)
 cd app && npm ci && npm run build && npm run lint
-
-# Documentation website (website/package.json)
-cd website && npm ci && npm run build
 ```
 
 ## Visual Fix Loop (VFL)
@@ -38,9 +35,8 @@ required:
 4. **Ask with the question tool**, never in plain text: one clear question, a
    success choice (e.g. `Yes, this is fixed`), and a free-text option.
 5. **Slowdowns are part of the task.** If the change makes import, refresh or
-   UI interaction slower, fix that before exiting (`tools/profile_aurora_blend.sh`
-   profiles the decomposed `.blend` export; it defaults to a Linux Wine/Proton
-   `Data.p4k` path, so set `SC_DATA_P4K` elsewhere).
+   UI interaction slower, fix that before exiting (`tools/profile_blend_export.sh <entity>`
+   profiles the decomposed `.blend` export).
 6. **Blender crashes stop the attempt.** Find and address the cause before
    resuming; if Blender must restart, ask the user with the question tool and
    wait.

@@ -53,7 +53,7 @@ export function UpdateBanner() {
               </button>
             ) : (
               <a
-                href={`https://github.com/diogotr7/StarBreaker/releases/tag/v${update.version}`}
+                href={`https://github.com/fcoltro/StarBreakerRE/releases/tag/v${update.version}`}
                 target="_blank"
                 rel="noreferrer"
                 className="px-2 py-0.5 rounded bg-info text-white font-medium hover:opacity-90 transition-opacity"

@@ -106,9 +106,6 @@ pub struct UiRegressionValidateRequest {
 pub struct UiCanvasStyleInventoryRequest {
     #[schemars(description = "Canvas identifier to inspect: absolute JSON path, record GUID, full record name, or bare record name.")]
     pub canvas: String,
-    #[schemars(description = "Optional local root containing decompiled BuildingBlocks JSON records. Defaults to ../ships/dcb_canvas/libs/foundry/records from the workspace root.")]
-    #[allow(dead_code)]
-    pub canvas_root: Option<String>,
     #[schemars(description = "Optional case-insensitive substring filter applied to style entry names.")]
     pub entry_filter: Option<String>,
     #[schemars(description = "If true, include compact condition summaries for each returned style entry. Default true.")]
@@ -125,9 +122,6 @@ pub struct UiSceneStyleProbeRequest {
     pub canvas: String,
     #[schemars(description = "Case-insensitive substring matched against resolved node name, type, or text fields.")]
     pub query: String,
-    #[schemars(description = "Optional local root containing decompiled BuildingBlocks JSON records. Defaults to ../ships/dcb_canvas/libs/foundry/records from the workspace root.")]
-    #[allow(dead_code)]
-    pub canvas_root: Option<String>,
     #[schemars(description = "Optional manufacturer id used for brand style selection, e.g. drak, rsi, aegis.")]
     pub manufacturer: Option<String>,
     #[schemars(description = "Maximum number of matching nodes to return. Default 80.")]
@@ -142,12 +136,6 @@ pub struct UiIrQueryRequest {
     pub content_guid: Option<String>,
     #[schemars(description = "Case-insensitive substring matched against IR node name or type.")]
     pub query: String,
-    #[schemars(description = "Optional local root containing decompiled BuildingBlocks JSON records. Defaults to ../ships/dcb_canvas/libs/foundry/records from the workspace root.")]
-    #[allow(dead_code)]
-    pub canvas_root: Option<String>,
-    #[schemars(description = "Optional local style record root. Defaults to <canvas_root>/ui/buildingblocks/styles.")]
-    #[allow(dead_code)]
-    pub style_root: Option<String>,
     #[schemars(description = "Manufacturer id used for style selection. Default drak.")]
     pub manufacturer: Option<String>,
     #[schemars(description = "Binding helper name included in the UI pipeline input. Default mcp-ui-query.")]
@@ -184,9 +172,6 @@ pub struct ImagePreviewRequest {
     pub path: String,
     #[schemars(description = "Mip level for DDS textures (0=full res, default 0)")]
     pub mip: Option<u32>,
-    #[schemars(description = "Cubemap face index (0-5) for cubemap DDS. Omit for 2D textures. (Not yet implemented)")]
-    #[allow(dead_code)]
-    pub face: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4029,7 +4014,6 @@ mod ui_regression_registry_tests {
         with_p4k_test(|server| {
             let response = server.ui_canvas_style_inventory(Parameters(UiCanvasStyleInventoryRequest {
                 canvas: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
-                canvas_root: None,
                 entry_filter: None,
                 include_conditions: Some(true),
                 include_modifiers: Some(true),
@@ -4052,7 +4036,6 @@ mod ui_regression_registry_tests {
             let response = server.ui_scene_style_probe(Parameters(UiSceneStyleProbeRequest {
                 canvas: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
                 query: "Target".to_string(),
-                canvas_root: None,
                 manufacturer: None,
                 limit: None,
             }));
@@ -4111,8 +4094,6 @@ mod ui_regression_registry_tests {
                 canvas_guid: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
                 content_guid: None,
                 query: "Target".to_string(),
-                canvas_root: None,
-                style_root: None,
                 manufacturer: Some("drak".to_string()),
                 helper: None,
                 width: Some(1920),
@@ -4263,7 +4244,6 @@ mod ui_regression_registry_tests {
             let response = server.ui_scene_style_probe(Parameters(UiSceneStyleProbeRequest {
                 canvas: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
                 query: "Target".to_string(),
-                canvas_root: None,
                 manufacturer: Some("drak".to_string()),
                 limit: None,
             }));
@@ -4281,7 +4261,6 @@ mod ui_regression_registry_tests {
             let response = server.ui_scene_style_probe(Parameters(UiSceneStyleProbeRequest {
                 canvas: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
                 query: "Target".to_string(),
-                canvas_root: None,
                 manufacturer: Some("banu".to_string()),
                 limit: None,
             }));
@@ -4298,7 +4277,6 @@ mod ui_regression_registry_tests {
         with_p4k_test(|server| {
             let response = server.ui_canvas_style_inventory(Parameters(UiCanvasStyleInventoryRequest {
                 canvas: "dd9ed6dc-7fe4-4884-9d11-c143290c9498".to_string(),
-                canvas_root: None,
                 entry_filter: None,
                 include_conditions: Some(true),
                 include_modifiers: Some(true),
